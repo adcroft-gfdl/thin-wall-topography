@@ -244,7 +244,7 @@ class ThinWalls(GMesh):
         C.flip(axis=1)
         U.flip(axis=1)
         V.flip(axis=1)
-    def push_corners_sw(self, update_interior_mean_max=True, verbose=False):
+    def push_corners_sw(self, update_interior_mean_max=True, matlab=True, verbose=False):
         """Folds out SW corner is it is the highest ridge. Acts only on "effective" values.
 
         A convex corner within a coarse grid cell can be made into a
@@ -278,6 +278,10 @@ class ThinWalls(GMesh):
             V.hgh[J,I] = numpy.maximum( V.hgh[J,I], crnr_max[j,i] )
             # Override SW cell values with outer values from coarse cell
             C.low[J,I] = opp_ridge[j,i] # This will be taller than other minimums but is it lower than opp_cmean ????
+            if matlab:
+                C.ave[J,I] = opp_cmean[j,i]
+                C.hgh[J,I] = opp_ridge[j,i]
+                update_interior_mean_max = False
             if update_interior_mean_max:
                 C.ave[J,I] = numpy.maximum( C.ave[J,I], opp_cmean[j,i] ) # Avoids changing the mean of the remaining coarse cell
                 C.hgh[J,I] = numpy.maximum( C.hgh[J,I], opp_ridge[j,i] )   # Will be taller than cell means?
@@ -288,7 +292,7 @@ class ThinWalls(GMesh):
                 U.hgh[J,I+1] = opp_ridge[j,i]
                 V.hgh[J+1,I] = opp_ridge[j,i]
         if verbose: print(j.size, " pushed")
-    def lower_tallest_buttress(self, verbose=False):
+    def lower_tallest_buttress(self, update_interior_mean=True, verbose=False):
         """Lower tallest barrier to remove buttress"""
         if verbose: print("Begin lower_tallest_buttress")
         # Alias lowest
@@ -313,33 +317,38 @@ class ThinWalls(GMesh):
         j,i = numpy.nonzero( V[1::2,1::2]>oppo3 )
         V[2*j+1,2*i+1] = oppo3[j,i]
         if verbose: print("  E ridge (low): ", j.size, ' removed')
+
         # Alias for averages
-        C,U,V = self.c_effective.ave,self.u_effective.ave,self.v_effective.ave
-        # Find where the S ridge is higher than other 3
-        oppo3 = numpy.maximum( U[1::2,1::2], numpy.maximum( V[1::2,::2], V[1::2,1::2] ) )
-        j,i = numpy.nonzero( U[::2,1::2]>oppo3 )
-        U[2*j,2*i+1] = oppo3[j,i]
-        if verbose: print("  S ridge (ave): ", j.size, ' removed')
-        # Find where the N ridge is higher than other 3
-        oppo3 = numpy.maximum( U[::2,1::2], numpy.maximum( V[1::2,::2], V[1::2,1::2] ) )
-        j,i = numpy.nonzero( U[1::2,1::2]>oppo3 )
-        U[2*j+1,2*i+1] = oppo3[j,i]
-        if verbose: print("  N ridge (ave): ", j.size, ' removed')
-        # Find where the W ridge is higher than other 3
-        oppo3 = numpy.maximum( V[1::2,1::2], numpy.maximum( U[::2,1::2], U[1::2,1::2] ) )
-        j,i = numpy.nonzero( V[1::2,::2]>oppo3 )
-        V[2*j+1,2*i] = oppo3[j,i]
-        if verbose: print("  W ridge (ave): ", j.size, ' removed')
-        # Find where the E ridge is higher than other 3
-        oppo3 = numpy.maximum( V[1::2,::2], numpy.maximum( U[::2,1::2], U[1::2,1::2] ) )
-        j,i = numpy.nonzero( V[1::2,1::2]>oppo3 )
-        V[2*j+1,2*i+1] = oppo3[j,i]
-        if verbose: print("  E ridge (ave): ", j.size, ' removed')
-    def fold_out_central_ridges(self, verbose=False):
+        if update_interior_mean:
+            C,U,V = self.c_effective.ave,self.u_effective.ave,self.v_effective.ave
+            # Find where the S ridge is higher than other 3
+            oppo3 = numpy.maximum( U[1::2,1::2], numpy.maximum( V[1::2,::2], V[1::2,1::2] ) )
+            j,i = numpy.nonzero( U[::2,1::2]>oppo3 )
+            U[2*j,2*i+1] = oppo3[j,i]
+            if verbose: print("  S ridge (ave): ", j.size, ' removed')
+            # Find where the N ridge is higher than other 3
+            oppo3 = numpy.maximum( U[::2,1::2], numpy.maximum( V[1::2,::2], V[1::2,1::2] ) )
+            j,i = numpy.nonzero( U[1::2,1::2]>oppo3 )
+            U[2*j+1,2*i+1] = oppo3[j,i]
+            if verbose: print("  N ridge (ave): ", j.size, ' removed')
+            # Find where the W ridge is higher than other 3
+            oppo3 = numpy.maximum( V[1::2,1::2], numpy.maximum( U[::2,1::2], U[1::2,1::2] ) )
+            j,i = numpy.nonzero( V[1::2,::2]>oppo3 )
+            V[2*j+1,2*i] = oppo3[j,i]
+            if verbose: print("  W ridge (ave): ", j.size, ' removed')
+            # Find where the E ridge is higher than other 3
+            oppo3 = numpy.maximum( V[1::2,::2], numpy.maximum( U[::2,1::2], U[1::2,1::2] ) )
+            j,i = numpy.nonzero( V[1::2,1::2]>oppo3 )
+            V[2*j+1,2*i+1] = oppo3[j,i]
+            if verbose: print("  E ridge (ave): ", j.size, ' removed')
+    def fold_out_central_ridges(self, matlab=False, verbose=False):
         """Folded out interior ridges to the sides of the coarse cell"""
         if verbose: print("Begin fold_out_central_ridges")
         if verbose: print("  S: ", end="")
         self.fold_out_central_ridge_s(verbose=verbose)
+        if matlab:
+            if verbose: print("  S=N: ", end="")
+            self.fold_out_central_ridge_ns(verbose=verbose)
         # Alias
         C, U, V = self.c_effective, self.u_effective, self.v_effective
         # Flip in j direction so j=S, i=E
@@ -356,6 +365,9 @@ class ThinWalls(GMesh):
         C, U, V = self.c_effective, self.u_effective, self.v_effective
         if verbose: print("  W: ", end="")
         self.fold_out_central_ridge_s(verbose=verbose)
+        if matlab:
+            if verbose: print("  W=E: ", end="")
+            self.fold_out_central_ridge_ns(verbose=verbose)
         # Flip in j direction so j=W, i=S
         C.flip(axis=0)
         U.flip(axis=0)
@@ -374,7 +386,7 @@ class ThinWalls(GMesh):
         C.flip(axis=1)
         U.flip(axis=1)
         V.flip(axis=1)
-    def fold_out_central_ridge_s(self, verbose=False):
+    def fold_out_central_ridge_s(self, matlab=True, verbose=False):
         """An interior east-west ridge is folded out to the southern outer edges if it
         is the tallest central ridge and the south is the taller half to expand to."""
         # Alias
@@ -382,6 +394,9 @@ class ThinWalls(GMesh):
         ew_ridge_low = numpy.minimum( V.low[1::2,::2], V.low[1::2,1::2] )
         #ew_ridge_hgh = numpy.maximum( V.hgh[1::2,::2], V.hgh[1::2,1::2] )
         #ew_ridge_ave = 0.5*( V.low[1::2,::2] + V.low[1::2,1::2] )
+        if matlab:
+            ew_ridge_hgh = numpy.maximum( V.hgh[1::2,::2], V.hgh[1::2,1::2] )
+            ew_ridge_ave = 0.5*( V.low[1::2,::2] + V.low[1::2,1::2] )
         ns_ridge_low_min = numpy.minimum( U.low[::2,1::2], U.low[1::2,1::2] )
         ns_ridge_low_max = numpy.maximum( U.low[::2,1::2], U.low[1::2,1::2] )
         # Coarse cell index j,i
@@ -401,6 +416,61 @@ class ThinWalls(GMesh):
         V.low[J,I] = numpy.maximum( V.low[J,I], ew_ridge_low[j,i] )
         V.low[J,I+1] = numpy.maximum( V.low[J,I+1], ew_ridge_low[j,i] )
         U.low[J,I+2] = numpy.maximum( U.low[J,I+2], ew_ridge_low[j,i] )
+        if matlab:
+            U.ave[J,I] = numpy.maximum( U.ave[J,I], ew_ridge_ave[j,i] )
+            V.ave[J,I] = numpy.maximum( V.ave[J,I], ew_ridge_ave[j,i] )
+            V.ave[J,I+1] = numpy.maximum( V.ave[J,I+1], ew_ridge_ave[j,i] )
+            U.ave[J,I+2] = numpy.maximum( U.ave[J,I+2], ew_ridge_ave[j,i] )
+            U.hgh[J,I] = numpy.maximum( U.ave[J,I], ew_ridge_hgh[j,i] )
+            V.hgh[J,I] = numpy.maximum( V.ave[J,I], ew_ridge_hgh[j,i] )
+            V.hgh[J,I+1] = numpy.maximum( V.ave[J,I+1], ew_ridge_hgh[j,i] )
+            U.hgh[J,I+2] = numpy.maximum( U.ave[J,I+2], ew_ridge_hgh[j,i] )
+        # Replace E-W ridge
+        V.low[J+1,I] = ns_ridge_low_min[j,i]
+        V.low[J+1,I+1] = ns_ridge_low_min[j,i]
+        # E-W ridge hgh and ave not modified??
+        # Southern cells
+        C.low[J,I] = ns_ridge_low_min[j,i]
+        C.low[J,I+1] = ns_ridge_low_min[j,i]
+        U.low[J,I+1] = ns_ridge_low_min[j,i]
+
+        if matlab:
+            C.ave[J,I] = 0.5*( C.ave[J+1,I] + C.ave[J+1,I+1] )
+            C.ave[J,I+1] = 0.5*( C.ave[J+1,I] + C.ave[J+1,I+1] )
+            C.hgh[J,I] = ns_ridge_low_min[j,i]
+            C.hgh[J,I+1] = ns_ridge_low_min[j,i]
+
+        if verbose: print(j.size, " folded")
+    def fold_out_central_ridge_ns(self, verbose=False):
+        """An interior east-west ridge is folded out to the southern outer edges if it
+        is the tallest central ridge and the south is the taller half to expand to."""
+        # Alias
+        C,U,V = self.c_effective,self.u_effective,self.v_effective
+        ew_ridge_low = numpy.minimum( V.low[1::2,::2], V.low[1::2,1::2] )
+        #ew_ridge_hgh = numpy.maximum( V.hgh[1::2,::2], V.hgh[1::2,1::2] )
+        #ew_ridge_ave = 0.5*( V.low[1::2,::2] + V.low[1::2,1::2] )
+        ns_ridge_low_min = numpy.minimum( U.low[::2,1::2], U.low[1::2,1::2] )
+        ns_ridge_low_max = numpy.maximum( U.low[::2,1::2], U.low[1::2,1::2] )
+        # Coarse cell index j,i
+        j,i = numpy.nonzero(
+              (  ( ew_ridge_low>ns_ridge_low_min) & (ew_ridge_low>=ns_ridge_low_max ) ) # E-W ridge is the taller ridge
+            & (  ( U.low[::2,1::2] == U.low[1::2,1::2] ) # Southern buttress is equal to the north
+               & ( C.low[::2,::2]+C.low[::2,1::2] == C.low[1::2,::2]+C.low[1::2,1::2] )  # Southern cells are equal to north on average
+               & ( V.low[:-1:2,::2]+V.low[:-1:2,1::2] == V.low[2::2,::2]+V.low[2::2,1::2] ) # Southern edges are equal to north on average
+              ) )
+        J,I = 2*j,2*i
+        # Outer edges of southern half
+        U.low[J,I] = numpy.maximum( U.low[J,I], ew_ridge_low[j,i] )
+        V.low[J,I] = numpy.maximum( V.low[J,I], ew_ridge_low[j,i] )
+        V.low[J,I+1] = numpy.maximum( V.low[J,I+1], ew_ridge_low[j,i] )
+        U.low[J,I+2] = numpy.maximum( U.low[J,I+2], ew_ridge_low[j,i] )
+
+        # Outer edges of northern half
+        U.low[J+1,I] = numpy.maximum( U.low[J+1,I], ew_ridge_low[j,i] )
+        V.low[J+2,I] = numpy.maximum( V.low[J+2,I], ew_ridge_low[j,i] )
+        V.low[J+2,I+1] = numpy.maximum( V.low[J+2,I+1], ew_ridge_low[j,i] )
+        U.low[J+1,I+2] = numpy.maximum( U.low[J+1,I+2], ew_ridge_low[j,i] )
+
         # Replace E-W ridge
         V.low[J+1,I] = ns_ridge_low_min[j,i]
         V.low[J+1,I+1] = ns_ridge_low_min[j,i]
@@ -408,8 +478,12 @@ class ThinWalls(GMesh):
         C.low[J,I] = ns_ridge_low_min[j,i]
         C.low[J,I+1] = ns_ridge_low_min[j,i]
         U.low[J,I+1] = ns_ridge_low_min[j,i]
+        # Northern cells
+        C.low[J+1,I] = ns_ridge_low_min[j,i]
+        C.low[J+1,I+1] = ns_ridge_low_min[j,i]
+        U.low[J+1,I+1] = ns_ridge_low_min[j,i]
         if verbose: print(j.size, " folded")
-    def invert_exterior_corners(self, verbose=False):
+    def invert_exterior_corners(self, matlab=True, verbose=False):
         """The deepest exterior corner is expanded to fill the coarse cell"""
         if verbose: print("Begin invert_exterior_corners")
         # Alias
@@ -449,85 +523,203 @@ class ThinWalls(GMesh):
         # Apply SW
         j,i,J,I=swj,swi,2*swj,2*swi
         # Deepen interior walls and cells
-        U.low[J,I+1] = numpy.minimum( U.low[J,I+1], d_sw[j,i] )
-        U.low[J+1,I+1] = numpy.minimum( U.low[J+1,I+1], d_sw[j,i] )
-        V.low[J+1,I] = numpy.minimum( V.low[J+1,I], d_sw[j,i] )
-        V.low[J+1,I+1] = numpy.minimum( V.low[J+1,I+1], d_sw[j,i] )
-        C.low[J,I] = numpy.minimum( C.low[J,I], d_sw[j,i] )
-        C.low[J,I+1] = numpy.minimum( C.low[J,I+1], d_sw[j,i] )
-        C.low[J+1,I] = numpy.minimum( C.low[J+1,I], d_sw[j,i] )
-        C.low[J+1,I+1] = numpy.minimum( C.low[J+1,I+1], d_sw[j,i] )
+        if matlab:
+            U.low[J,I+1] = d_sw[j,i]
+            U.low[J+1,I+1] = d_sw[j,i]
+            V.low[J+1,I] = d_sw[j,i]
+            V.low[J+1,I+1] = d_sw[j,i]
+            # C is not treated in MatLab
+        else: # minimum is not necessary as all interior wall low are of the same height and would be higher than d_sw here
+            U.low[J,I+1] = numpy.minimum( U.low[J,I+1], d_sw[j,i] )
+            U.low[J+1,I+1] = numpy.minimum( U.low[J+1,I+1], d_sw[j,i] )
+            V.low[J+1,I] = numpy.minimum( V.low[J+1,I], d_sw[j,i] )
+            V.low[J+1,I+1] = numpy.minimum( V.low[J+1,I+1], d_sw[j,i] )
+            C.low[J,I] = numpy.minimum( C.low[J,I], d_sw[j,i] )
+            C.low[J,I+1] = numpy.minimum( C.low[J,I+1], d_sw[j,i] )
+            C.low[J+1,I] = numpy.minimum( C.low[J+1,I], d_sw[j,i] )
+            C.low[J+1,I+1] = numpy.minimum( C.low[J+1,I+1], d_sw[j,i] )
         # Outer edges
-        new_ridge = numpy.minimum( r_se, r_nw )
-        V.low[J,I+1] = numpy.maximum( V.low[J,I+1], r_se[j,i] )
-        U.low[J,I+2] = numpy.maximum( U.low[J,I+2], r_se[j,i] )
-        U.low[J+1,I+2] = numpy.maximum( U.low[J+1,I+2], new_ridge[j,i] )
-        V.low[J+2,I+1] = numpy.maximum( V.low[J+2,I+1], new_ridge[j,i] )
-        V.low[J+2,I] = numpy.maximum( V.low[J+2,I], r_nw[j,i] )
-        U.low[J+1,I] = numpy.maximum( U.low[J+1,I], r_nw[j,i] )
+        if matlab:
+            new_ridge = numpy.minimum( r_se, r_nw )
+            V.low[J,I+1] = numpy.maximum( V.low[J,I+1], new_ridge[j,i] )
+            U.low[J,I+2] = numpy.maximum( U.low[J,I+2], new_ridge[j,i] )
+            U.low[J+1,I+2] = numpy.maximum( U.low[J+1,I+2], new_ridge[j,i] )
+            V.low[J+2,I+1] = numpy.maximum( V.low[J+2,I+1], new_ridge[j,i] )
+            V.low[J+2,I] = numpy.maximum( V.low[J+2,I], new_ridge[j,i] )
+            U.low[J+1,I] = numpy.maximum( U.low[J+1,I], new_ridge[j,i] )
+            new_ridge = 0.5 * ( r_se + r_nw )
+            V.ave[J,I+1] = numpy.maximum( V.ave[J,I+1], new_ridge[j,i] )
+            U.ave[J,I+2] = numpy.maximum( U.ave[J,I+2], new_ridge[j,i] )
+            U.ave[J+1,I+2] = numpy.maximum( U.ave[J+1,I+2], new_ridge[j,i] )
+            V.ave[J+2,I+1] = numpy.maximum( V.ave[J+2,I+1], new_ridge[j,i] )
+            V.ave[J+2,I] = numpy.maximum( V.ave[J+2,I], new_ridge[j,i] )
+            U.ave[J+1,I] = numpy.maximum( U.ave[J+1,I], new_ridge[j,i] )
+            new_ridge = numpy.maximum( r_se, r_nw )
+            V.hgh[J,I+1] = numpy.maximum( V.hgh[J,I+1], new_ridge[j,i] )
+            U.hgh[J,I+2] = numpy.maximum( U.hgh[J,I+2], new_ridge[j,i] )
+            U.hgh[J+1,I+2] = numpy.maximum( U.hgh[J+1,I+2], new_ridge[j,i] )
+            V.hgh[J+2,I+1] = numpy.maximum( V.hgh[J+2,I+1], new_ridge[j,i] )
+            V.hgh[J+2,I] = numpy.maximum( V.hgh[J+2,I], new_ridge[j,i] )
+            U.hgh[J+1,I] = numpy.maximum( U.hgh[J+1,I], new_ridge[j,i] )
+        else:
+            new_ridge = numpy.minimum( r_se, r_nw )
+            V.low[J,I+1] = numpy.maximum( V.low[J,I+1], r_se[j,i] )
+            U.low[J,I+2] = numpy.maximum( U.low[J,I+2], r_se[j,i] )
+            U.low[J+1,I+2] = numpy.maximum( U.low[J+1,I+2], new_ridge[j,i] )
+            V.low[J+2,I+1] = numpy.maximum( V.low[J+2,I+1], new_ridge[j,i] )
+            V.low[J+2,I] = numpy.maximum( V.low[J+2,I], r_nw[j,i] )
+            U.low[J+1,I] = numpy.maximum( U.low[J+1,I], r_nw[j,i] )
+
         if verbose: print("  SW: ", swj.size, " inverted")
 
         # Apply SE
         j,i,J,I=sej,sei,2*sej,2*sei
         # Deepen interior walls and cells
-        U.low[J,I+1] = numpy.minimum( U.low[J,I+1], d_se[j,i] )
-        U.low[J+1,I+1] = numpy.minimum( U.low[J+1,I+1], d_se[j,i] )
-        V.low[J+1,I] = numpy.minimum( V.low[J+1,I], d_se[j,i] )
-        V.low[J+1,I+1] = numpy.minimum( V.low[J+1,I+1], d_se[j,i] )
-        C.low[J,I] = numpy.minimum( C.low[J,I], d_se[j,i] )
-        C.low[J,I+1] = numpy.minimum( C.low[J,I+1], d_se[j,i] )
-        C.low[J+1,I] = numpy.minimum( C.low[J+1,I], d_se[j,i] )
-        C.low[J+1,I+1] = numpy.minimum( C.low[J+1,I+1], d_se[j,i] )
+        if matlab:
+            U.low[J,I+1] = d_se[j,i]
+            U.low[J+1,I+1] = d_se[j,i]
+            V.low[J+1,I] = d_se[j,i]
+            V.low[J+1,I+1] = d_se[j,i]
+        else:
+            U.low[J,I+1] = numpy.minimum( U.low[J,I+1], d_se[j,i] )
+            U.low[J+1,I+1] = numpy.minimum( U.low[J+1,I+1], d_se[j,i] )
+            V.low[J+1,I] = numpy.minimum( V.low[J+1,I], d_se[j,i] )
+            V.low[J+1,I+1] = numpy.minimum( V.low[J+1,I+1], d_se[j,i] )
+            C.low[J,I] = numpy.minimum( C.low[J,I], d_se[j,i] )
+            C.low[J,I+1] = numpy.minimum( C.low[J,I+1], d_se[j,i] )
+            C.low[J+1,I] = numpy.minimum( C.low[J+1,I], d_se[j,i] )
+            C.low[J+1,I+1] = numpy.minimum( C.low[J+1,I+1], d_se[j,i] )
         # Outer edges
-        new_ridge = numpy.minimum( r_sw, r_ne )
-        V.low[J,I] = numpy.maximum( V.low[J,I], r_sw[j,i] )
-        U.low[J,I] = numpy.maximum( U.low[J,I], r_sw[j,i] )
-        U.low[J+1,I] = numpy.maximum( U.low[J+1,I], new_ridge[j,i] )
-        V.low[J+2,I] = numpy.maximum( V.low[J+2,I], new_ridge[j,i] )
-        V.low[J+2,I+1] = numpy.maximum( V.low[J+2,I+1], r_ne[j,i] )
-        U.low[J+1,I+2] = numpy.maximum( U.low[J+1,I+2], r_ne[j,i] )
+        if matlab:
+            new_ridge = numpy.minimum( r_sw, r_ne )
+            V.low[J,I] = numpy.maximum( V.low[J,I], new_ridge[j,i] )
+            U.low[J,I] = numpy.maximum( U.low[J,I], new_ridge[j,i] )
+            U.low[J+1,I] = numpy.maximum( U.low[J+1,I], new_ridge[j,i] )
+            V.low[J+2,I] = numpy.maximum( V.low[J+2,I], new_ridge[j,i] )
+            V.low[J+2,I+1] = numpy.maximum( V.low[J+2,I+1], new_ridge[j,i] )
+            U.low[J+1,I+2] = numpy.maximum( U.low[J+1,I+2], new_ridge[j,i] )
+            new_ridge = 0.5 * ( r_sw + r_ne )
+            V.ave[J,I] = numpy.maximum( V.ave[J,I], new_ridge[j,i] )
+            U.ave[J,I] = numpy.maximum( U.ave[J,I], new_ridge[j,i] )
+            U.ave[J+1,I] = numpy.maximum( U.ave[J+1,I], new_ridge[j,i] )
+            V.ave[J+2,I] = numpy.maximum( V.ave[J+2,I], new_ridge[j,i] )
+            V.ave[J+2,I+1] = numpy.maximum( V.ave[J+2,I+1], new_ridge[j,i] )
+            U.ave[J+1,I+2] = numpy.maximum( U.ave[J+1,I+2], new_ridge[j,i] )
+            new_ridge = numpy.maximum( r_sw, r_ne )
+            V.hgh[J,I] = numpy.maximum( V.hgh[J,I], new_ridge[j,i] )
+            U.hgh[J,I] = numpy.maximum( U.hgh[J,I], new_ridge[j,i] )
+            U.hgh[J+1,I] = numpy.maximum( U.hgh[J+1,I], new_ridge[j,i] )
+            V.hgh[J+2,I] = numpy.maximum( V.hgh[J+2,I], new_ridge[j,i] )
+            V.hgh[J+2,I+1] = numpy.maximum( V.hgh[J+2,I+1], new_ridge[j,i] )
+            U.hgh[J+1,I+2] = numpy.maximum( U.hgh[J+1,I+2], new_ridge[j,i] )
+        else:
+            new_ridge = numpy.minimum( r_sw, r_ne )
+            V.low[J,I] = numpy.maximum( V.low[J,I], r_sw[j,i] )
+            U.low[J,I] = numpy.maximum( U.low[J,I], r_sw[j,i] )
+            U.low[J+1,I] = numpy.maximum( U.low[J+1,I], new_ridge[j,i] )
+            V.low[J+2,I] = numpy.maximum( V.low[J+2,I], new_ridge[j,i] )
+            V.low[J+2,I+1] = numpy.maximum( V.low[J+2,I+1], r_ne[j,i] )
+            U.low[J+1,I+2] = numpy.maximum( U.low[J+1,I+2], r_ne[j,i] )
         if verbose: print("  SE: ", sej.size, " inverted")
 
         # Apply NW
         j,i,J,I=nwj,nwi,2*nwj,2*nwi
         # Deepen interior walls and cells
-        U.low[J,I+1] = numpy.minimum( U.low[J,I+1], d_nw[j,i] )
-        U.low[J+1,I+1] = numpy.minimum( U.low[J+1,I+1], d_nw[j,i] )
-        V.low[J+1,I] = numpy.minimum( V.low[J+1,I], d_nw[j,i] )
-        V.low[J+1,I+1] = numpy.minimum( V.low[J+1,I+1], d_nw[j,i] )
-        C.low[J,I] = numpy.minimum( C.low[J,I], d_nw[j,i] )
-        C.low[J,I+1] = numpy.minimum( C.low[J,I+1], d_nw[j,i] )
-        C.low[J+1,I] = numpy.minimum( C.low[J+1,I], d_nw[j,i] )
-        C.low[J+1,I+1] = numpy.minimum( C.low[J+1,I+1], d_nw[j,i] )
+        if matlab:
+            U.low[J,I+1] = d_nw[j,i]
+            U.low[J+1,I+1] = d_nw[j,i]
+            V.low[J+1,I] = d_nw[j,i]
+            V.low[J+1,I+1] = d_nw[j,i]
+        else:
+            U.low[J,I+1] = numpy.minimum( U.low[J,I+1], d_nw[j,i] )
+            U.low[J+1,I+1] = numpy.minimum( U.low[J+1,I+1], d_nw[j,i] )
+            V.low[J+1,I] = numpy.minimum( V.low[J+1,I], d_nw[j,i] )
+            V.low[J+1,I+1] = numpy.minimum( V.low[J+1,I+1], d_nw[j,i] )
+            C.low[J,I] = numpy.minimum( C.low[J,I], d_nw[j,i] )
+            C.low[J,I+1] = numpy.minimum( C.low[J,I+1], d_nw[j,i] )
+            C.low[J+1,I] = numpy.minimum( C.low[J+1,I], d_nw[j,i] )
+            C.low[J+1,I+1] = numpy.minimum( C.low[J+1,I+1], d_nw[j,i] )
         # Outer edges
-        new_ridge = numpy.minimum( r_ne, r_sw )
-        V.low[J+2,I+1] = numpy.maximum( V.low[J+2,I+1], r_ne[j,i] )
-        U.low[J+1,I+2] = numpy.maximum( U.low[J+1,I+2], r_ne[j,i] )
-        U.low[J,I+2] = numpy.maximum( U.low[J,I+2], new_ridge[j,i] )
-        V.low[J,I+1] = numpy.maximum( V.low[J,I+1], new_ridge[j,i] )
-        V.low[J,I] = numpy.maximum( V.low[J,I], r_sw[j,i] )
-        U.low[J,I] = numpy.maximum( U.low[J,I], r_sw[j,i] )
+        if matlab:
+            new_ridge = numpy.minimum( r_ne, r_sw )
+            V.low[J+2,I+1] = numpy.maximum( V.low[J+2,I+1], new_ridge[j,i] )
+            U.low[J+1,I+2] = numpy.maximum( U.low[J+1,I+2], new_ridge[j,i] )
+            U.low[J,I+2] = numpy.maximum( U.low[J,I+2], new_ridge[j,i] )
+            V.low[J,I+1] = numpy.maximum( V.low[J,I+1], new_ridge[j,i] )
+            V.low[J,I] = numpy.maximum( V.low[J,I], new_ridge[j,i] )
+            U.low[J,I] = numpy.maximum( U.low[J,I], new_ridge[j,i] )
+            new_ridge = 0.5 * ( r_ne + r_sw )
+            V.ave[J+2,I+1] = numpy.maximum( V.ave[J+2,I+1], new_ridge[j,i] )
+            U.ave[J+1,I+2] = numpy.maximum( U.ave[J+1,I+2], new_ridge[j,i] )
+            U.ave[J,I+2] = numpy.maximum( U.ave[J,I+2], new_ridge[j,i] )
+            V.ave[J,I+1] = numpy.maximum( V.ave[J,I+1], new_ridge[j,i] )
+            V.ave[J,I] = numpy.maximum( V.ave[J,I], new_ridge[j,i] )
+            U.ave[J,I] = numpy.maximum( U.ave[J,I], new_ridge[j,i] )
+            new_ridge = numpy.maximum( r_ne, r_sw )
+            V.hgh[J+2,I+1] = numpy.maximum( V.hgh[J+2,I+1], new_ridge[j,i] )
+            U.hgh[J+1,I+2] = numpy.maximum( U.hgh[J+1,I+2], new_ridge[j,i] )
+            U.hgh[J,I+2] = numpy.maximum( U.hgh[J,I+2], new_ridge[j,i] )
+            V.hgh[J,I+1] = numpy.maximum( V.hgh[J,I+1], new_ridge[j,i] )
+            V.hgh[J,I] = numpy.maximum( V.hgh[J,I], new_ridge[j,i] )
+            U.hgh[J,I] = numpy.maximum( U.hgh[J,I], new_ridge[j,i] )
+        else:
+            new_ridge = numpy.minimum( r_ne, r_sw )
+            V.low[J+2,I+1] = numpy.maximum( V.low[J+2,I+1], r_ne[j,i] )
+            U.low[J+1,I+2] = numpy.maximum( U.low[J+1,I+2], r_ne[j,i] )
+            U.low[J,I+2] = numpy.maximum( U.low[J,I+2], new_ridge[j,i] )
+            V.low[J,I+1] = numpy.maximum( V.low[J,I+1], new_ridge[j,i] )
+            V.low[J,I] = numpy.maximum( V.low[J,I], r_sw[j,i] )
+            U.low[J,I] = numpy.maximum( U.low[J,I], r_sw[j,i] )
         if verbose: print("  NW: ", nwj.size, " inverted")
 
         # Apply NE
         j,i,J,I=nej,nei,2*nej,2*nei
         # Deepen interior walls and cells
-        U.low[J,I+1] = numpy.minimum( U.low[J,I+1], d_ne[j,i] )
-        U.low[J+1,I+1] = numpy.minimum( U.low[J+1,I+1], d_ne[j,i] )
-        V.low[J+1,I] = numpy.minimum( V.low[J+1,I], d_ne[j,i] )
-        V.low[J+1,I+1] = numpy.minimum( V.low[J+1,I+1], d_ne[j,i] )
-        C.low[J,I] = numpy.minimum( C.low[J,I], d_ne[j,i] )
-        C.low[J,I+1] = numpy.minimum( C.low[J,I+1], d_ne[j,i] )
-        C.low[J+1,I] = numpy.minimum( C.low[J+1,I], d_ne[j,i] )
-        C.low[J+1,I+1] = numpy.minimum( C.low[J+1,I+1], d_ne[j,i] )
+        if matlab:
+            U.low[J,I+1] = d_ne[j,i]
+            U.low[J+1,I+1] = d_ne[j,i]
+            V.low[J+1,I] = d_ne[j,i]
+            V.low[J+1,I+1] = d_ne[j,i]
+        else:
+            U.low[J,I+1] = numpy.minimum( U.low[J,I+1], d_ne[j,i] )
+            U.low[J+1,I+1] = numpy.minimum( U.low[J+1,I+1], d_ne[j,i] )
+            V.low[J+1,I] = numpy.minimum( V.low[J+1,I], d_ne[j,i] )
+            V.low[J+1,I+1] = numpy.minimum( V.low[J+1,I+1], d_ne[j,i] )
+            C.low[J,I] = numpy.minimum( C.low[J,I], d_ne[j,i] )
+            C.low[J,I+1] = numpy.minimum( C.low[J,I+1], d_ne[j,i] )
+            C.low[J+1,I] = numpy.minimum( C.low[J+1,I], d_ne[j,i] )
+            C.low[J+1,I+1] = numpy.minimum( C.low[J+1,I+1], d_ne[j,i] )
         # Outer edges
-        new_ridge = numpy.minimum( r_nw, r_se )
-        V.low[J+2,I] = numpy.maximum( V.low[J+2,I], r_nw[j,i] )
-        U.low[J+1,I] = numpy.maximum( U.low[J+1,I], r_nw[j,i] )
-        U.low[J,I] = numpy.maximum( U.low[J,I], new_ridge[j,i] )
-        V.low[J,I] = numpy.maximum( V.low[J,I], new_ridge[j,i] )
-        V.low[J,I+1] = numpy.maximum( V.low[J,I+1], r_se[j,i] )
-        U.low[J,I+2] = numpy.maximum( U.low[J,I+2], r_se[j,i] )
+        if matlab:
+            new_ridge = numpy.minimum( r_nw, r_se )
+            V.low[J+2,I] = numpy.maximum( V.low[J+2,I], new_ridge[j,i] )
+            U.low[J+1,I] = numpy.maximum( U.low[J+1,I], new_ridge[j,i] )
+            U.low[J,I] = numpy.maximum( U.low[J,I], new_ridge[j,i] )
+            V.low[J,I] = numpy.maximum( V.low[J,I], new_ridge[j,i] )
+            V.low[J,I+1] = numpy.maximum( V.low[J,I+1], new_ridge[j,i] )
+            U.low[J,I+2] = numpy.maximum( U.low[J,I+2], new_ridge[j,i] )
+            new_ridge = 0.5 * ( r_nw + r_se )
+            V.ave[J+2,I] = numpy.maximum( V.ave[J+2,I], new_ridge[j,i] )
+            U.ave[J+1,I] = numpy.maximum( U.ave[J+1,I], new_ridge[j,i] )
+            U.ave[J,I] = numpy.maximum( U.ave[J,I], new_ridge[j,i] )
+            V.ave[J,I] = numpy.maximum( V.ave[J,I], new_ridge[j,i] )
+            V.ave[J,I+1] = numpy.maximum( V.ave[J,I+1], new_ridge[j,i] )
+            U.ave[J,I+2] = numpy.maximum( U.ave[J,I+2], new_ridge[j,i] )
+            new_ridge = numpy.maximum( r_nw, r_se )
+            V.hgh[J+2,I] = numpy.maximum( V.hgh[J+2,I], new_ridge[j,i] )
+            U.hgh[J+1,I] = numpy.maximum( U.hgh[J+1,I], new_ridge[j,i] )
+            U.hgh[J,I] = numpy.maximum( U.hgh[J,I], new_ridge[j,i] )
+            V.hgh[J,I] = numpy.maximum( V.hgh[J,I], new_ridge[j,i] )
+            V.hgh[J,I+1] = numpy.maximum( V.hgh[J,I+1], new_ridge[j,i] )
+            U.hgh[J,I+2] = numpy.maximum( U.hgh[J,I+2], new_ridge[j,i] )
+        else:
+            new_ridge = numpy.minimum( r_nw, r_se )
+            V.low[J+2,I] = numpy.maximum( V.low[J+2,I], r_nw[j,i] )
+            U.low[J+1,I] = numpy.maximum( U.low[J+1,I], r_nw[j,i] )
+            U.low[J,I] = numpy.maximum( U.low[J,I], new_ridge[j,i] )
+            V.low[J,I] = numpy.maximum( V.low[J,I], new_ridge[j,i] )
+            V.low[J,I+1] = numpy.maximum( V.low[J,I+1], r_se[j,i] )
+            U.low[J,I+2] = numpy.maximum( U.low[J,I+2], r_se[j,i] )
         if verbose: print("  NE: ", nej.size, " inverted")
     def diagnose_EW_pathway(self, measure='effective'):
         """Returns deepest EW pathway"""
@@ -778,6 +970,38 @@ class ThinWalls(GMesh):
         M.v_effective.low = self.v_effective.min2v()
         M.v_effective.hgh = self.v_effective.max2v()
         return M
+
+    def boundHbyUV(self):
+        """Bound center values to be lower than edge values"""
+        # for coarsened grid
+        C, U, V = self.c_effective, self.u_effective, self.v_effective
+        He = numpy.minimum( numpy.minimum(U.low[:,:-1], U.low[:,1:]), numpy.minimum(V.low[:-1,:], V.low[1:,:]) )
+        C.low = numpy.minimum(C.low, He)
+
+        U.ave = numpy.maximum(U.low, U.ave)
+        V.ave = numpy.maximum(V.low, V.ave)
+        He = numpy.minimum( numpy.minimum(U.ave[:,:-1], U.ave[:,1:]), numpy.minimum(V.ave[:-1,:], V.ave[1:,:]) )
+        C.ave = numpy.minimum(C.ave, He)
+
+        U.hgh = numpy.maximum(U.ave, U.hgh)
+        V.hgh = numpy.maximum(V.ave, V.hgh)
+        # # why not bound C.hgh???
+        # He = numpy.minimum( numpy.minimum(U.hgh[:,:-1], U.hgh[:,1:]), numpy.minimum(V.hgh[:-1,:], V.hgh[1:,:]) )
+        # C.hgh = numpy.minimum(C.hgh, He)
+
+    def regenUV(self):
+        pass
+
+    def fillPotHoles(self):
+        """Bound center values to be higher than edge values"""
+        # for coarsened grid
+        C, U, V = self.c_effective, self.u_effective, self.v_effective
+        He = numpy.minimum( numpy.minimum(U.low[:,:-1], U.low[:,1:]), numpy.minimum(V.low[:-1,:], V.low[1:,:]) )
+        C.low = numpy.maximum(C.low, He)
+
+        He = numpy.minimum( numpy.minimum(U.ave[:,:-1], U.ave[:,1:]), numpy.minimum(V.ave[:-1,:], V.ave[1:,:]) )
+        C.ave = numpy.maximum(C.ave, He)
+
     def plot(self, axis, thickness=0.2, metric='mean', measure='simple', *args, **kwargs):
         """Plots ThinWalls data."""
         def copy_coord(xy):
