@@ -41,10 +41,26 @@ class IntCoord(object):
         self.n1 = n1
         if n1 is None:
             self.n1 = self.N
-    def arrayc(self):
-        return self.start+self.delta*np.arange(self.n0,self.n1)
-    def arrayb(self):
-        return self.start+self.delta*np.arange(self.n0-0.5,self.n1+0.5)
+        self.size = self.n1 - self.n0 + self.N * int( self.n0>self.n1 )
+        self._centers, self._bounds = None, None
+    @property
+    def centers(self):
+        if self._centers is None:
+            if self.n0>self.n1:
+                self._centers = self.start + self.delta * np.r_[np.arange(self.n0, self.N),
+                                                                np.arange(self.N, self.N+self.n1)]
+            else:
+                self._centers = self.start + self.delta * np.arange(self.n0, self.n1)
+        return self._centers
+    @property
+    def bounds(self):
+        if self._bounds is None:
+            if self.n0>self.n1:
+                self._bounds = self.start + self.delta * np.r_[np.arange(self.n0-0.5, self.N),
+                                                               np.arange(self.N+0.5, self.N+self.n1)]
+            else:
+                self._bounds = self.start + self.delta * np.arange(self.n0-0.5, self.n1)
+        return self._bounds
 
 class GMesh:
     """Describes 2D meshes for ESMs.
