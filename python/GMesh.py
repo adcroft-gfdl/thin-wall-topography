@@ -41,6 +41,10 @@ class IntCoord(object):
         self.n1 = n1
         if n1 is None:
             self.n1 = self.N
+    def arrayc(self):
+        return self.start+self.delta*np.arange(self.n0,self.n1)
+    def arrayb(self):
+        return self.start+self.delta*np.arange(self.n0-0.5,self.n1+0.5)
 
 class GMesh:
     """Describes 2D meshes for ESMs.
