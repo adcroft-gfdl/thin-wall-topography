@@ -313,8 +313,8 @@ class GMesh:
         sni,snj = lon.N,lat.N # Shape of source
         # Spacing on uniform mesh
         dellon, dellat = lon.delta, lat.delta
-        assert self.lat.max()<=lat.start+(lat.n1+0.5)*lat.delta, 'Mesh has latitudes above range of regular grid '+str(self.lat.max())+' '+str(lat.max()+0.5*dellat)
-        assert self.lat.min()>=lat.start+(lat.n0-0.5)*lat.delta, 'Mesh has latitudes below range of regular grid '+str(self.lat.min())+' '+str(lat.min()-0.5*dellat)
+        assert self.lat.max()<=lat.start+(lat.n1+0.5)*lat.delta, 'Mesh has latitudes above range of regular grid '+str(self.lat.max())+' '+str(lat.start+(lat.n1+0.5)*lat.delta)
+        assert self.lat.min()>=lat.start+(lat.n0-0.5)*lat.delta, 'Mesh has latitudes below range of regular grid '+str(self.lat.min())+' '+str(lat.start+(lat.n0-0.5)*lat.delta)
         if use_center:
             lon_tgt, lat_tgt = self.interp_center_coords(work_in_3d=True)
         else:
@@ -334,7 +334,7 @@ class GMesh:
            on the mesh, 0 if no node falls in a cell"""
         # Indexes of nearest xs,ys to each node on the mesh
         i,j = self.find_nn_uniform_source(xs,ys,use_center=use_center)
-        sni,snj = np.mod(xs.n1-xs.n0,xs.N), ys.n1-ys.n0 # Shape of source
+        sni, snj = xs.size, ys.size # Shape of source
         hits = np.zeros((snj,sni))
         if singularity_radius>0:
             iy = (np.ceil((90-singularity_radius-ys.start)/ys.delta)-ys.n0).astype(int)
