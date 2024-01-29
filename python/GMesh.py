@@ -245,6 +245,13 @@ class GMesh:
                 del_lam[jst:jed, ist:ied], del_phi[jst:jed, ist:ied] = 0.0, 0.0
         return del_lam, del_phi
 
+    def max_refine_level(self, lon, lat):
+        dlat, dlon = self.coarsest_resolution()
+        dlat_src, dlon_src = lon.delta, lat.delta
+
+        return np.maximum( np.ceil( np.log2( dlat/dlat_src ) ),
+                           np.ceil( np.log2( dlon/dlon_src ) ) )
+
     def refineby2(self, work_in_3d=True):
         """Returns new Mesh instance with twice the resolution"""
 
