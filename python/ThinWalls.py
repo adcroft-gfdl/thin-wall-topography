@@ -345,7 +345,7 @@ class ThinWalls(GMesh):
         """Folded out interior ridges to the sides of the coarse cell"""
         if verbose: print("Begin fold_out_central_ridges")
         if verbose: print("  S: ", end="")
-        self.fold_out_central_ridge_s(verbose=verbose)
+        self.fold_out_central_ridge_s(matlab=matlab, verbose=verbose)
         if matlab:
             if verbose: print("  S=N: ", end="")
             self.fold_out_central_ridge_ns(verbose=verbose)
@@ -356,7 +356,7 @@ class ThinWalls(GMesh):
         U.flip(axis=0)
         V.flip(axis=0)
         if verbose: print("  N: ", end="")
-        self.fold_out_central_ridge_s(verbose=verbose)
+        self.fold_out_central_ridge_s(matlab=matlab, verbose=verbose)
         # Transpose so j=E, i=S
         C.transpose()
         U.transpose()
@@ -364,7 +364,7 @@ class ThinWalls(GMesh):
         self.u_effective,self.v_effective = self.v_effective,self.u_effective
         C, U, V = self.c_effective, self.u_effective, self.v_effective
         if verbose: print("  W: ", end="")
-        self.fold_out_central_ridge_s(verbose=verbose)
+        self.fold_out_central_ridge_s(matlab=matlab, verbose=verbose)
         if matlab:
             if verbose: print("  W=E: ", end="")
             self.fold_out_central_ridge_ns(verbose=verbose)
@@ -373,7 +373,7 @@ class ThinWalls(GMesh):
         U.flip(axis=0)
         V.flip(axis=0)
         if verbose: print("  E: ", end="")
-        self.fold_out_central_ridge_s(verbose=verbose)
+        self.fold_out_central_ridge_s(matlab=matlab, verbose=verbose)
         # Undo transformations
         C.transpose()
         U.transpose()
@@ -459,29 +459,62 @@ class ThinWalls(GMesh):
                & ( V.low[:-1:2,::2]+V.low[:-1:2,1::2] == V.low[2::2,::2]+V.low[2::2,1::2] ) # Southern edges are equal to north on average
               ) )
         J,I = 2*j,2*i
+
+        # Old by HW
+        # # Outer edges of southern half
+        # U.low[J,I] = numpy.maximum( U.low[J,I], ew_ridge_low[j,i] )
+        # V.low[J,I] = numpy.maximum( V.low[J,I], ew_ridge_low[j,i] )
+        # V.low[J,I+1] = numpy.maximum( V.low[J,I+1], ew_ridge_low[j,i] )
+        # U.low[J,I+2] = numpy.maximum( U.low[J,I+2], ew_ridge_low[j,i] )
+
+        # # Outer edges of northern half
+        # U.low[J+1,I] = numpy.maximum( U.low[J+1,I], ew_ridge_low[j,i] )
+        # V.low[J+2,I] = numpy.maximum( V.low[J+2,I], ew_ridge_low[j,i] )
+        # V.low[J+2,I+1] = numpy.maximum( V.low[J+2,I+1], ew_ridge_low[j,i] )
+        # U.low[J+1,I+2] = numpy.maximum( U.low[J+1,I+2], ew_ridge_low[j,i] )
+
+        # # Replace E-W ridge
+        # V.low[J+1,I] = ns_ridge_low_min[j,i]
+        # V.low[J+1,I+1] = ns_ridge_low_min[j,i]
+        # # Southern cells
+        # C.low[J,I] = ns_ridge_low_min[j,i]
+        # C.low[J,I+1] = ns_ridge_low_min[j,i]
+        # U.low[J,I+1] = ns_ridge_low_min[j,i]
+        # # Northern cells
+        # C.low[J+1,I] = ns_ridge_low_min[j,i]
+        # C.low[J+1,I+1] = ns_ridge_low_min[j,i]
+        # U.low[J+1,I+1] = ns_ridge_low_min[j,i]
+
+        # MatLab
         # Outer edges of southern half
         U.low[J,I] = numpy.maximum( U.low[J,I], ew_ridge_low[j,i] )
+        U.low[J,I+2] = numpy.maximum( U.low[J,I+2], ew_ridge_low[j,i] )
+
         V.low[J,I] = numpy.maximum( V.low[J,I], ew_ridge_low[j,i] )
         V.low[J,I+1] = numpy.maximum( V.low[J,I+1], ew_ridge_low[j,i] )
-        U.low[J,I+2] = numpy.maximum( U.low[J,I+2], ew_ridge_low[j,i] )
 
         # Outer edges of northern half
         U.low[J+1,I] = numpy.maximum( U.low[J+1,I], ew_ridge_low[j,i] )
-        V.low[J+2,I] = numpy.maximum( V.low[J+2,I], ew_ridge_low[j,i] )
-        V.low[J+2,I+1] = numpy.maximum( V.low[J+2,I+1], ew_ridge_low[j,i] )
         U.low[J+1,I+2] = numpy.maximum( U.low[J+1,I+2], ew_ridge_low[j,i] )
 
-        # Replace E-W ridge
-        V.low[J+1,I] = ns_ridge_low_min[j,i]
-        V.low[J+1,I+1] = ns_ridge_low_min[j,i]
-        # Southern cells
-        C.low[J,I] = ns_ridge_low_min[j,i]
-        C.low[J,I+1] = ns_ridge_low_min[j,i]
-        U.low[J,I+1] = ns_ridge_low_min[j,i]
-        # Northern cells
-        C.low[J+1,I] = ns_ridge_low_min[j,i]
-        C.low[J+1,I+1] = ns_ridge_low_min[j,i]
-        U.low[J+1,I+1] = ns_ridge_low_min[j,i]
+        V.low[J+2,I] = numpy.maximum( V.low[J+2,I], ew_ridge_low[j,i] )
+        V.low[J+2,I+1] = numpy.maximum( V.low[J+2,I+1], ew_ridge_low[j,i] )
+
+        U.low[J,I+1] = ew_ridge_low[j,i]
+        U.low[J+1,I+1] = ew_ridge_low[j,i]
+        V.low[J+1,I] = ew_ridge_low[j,i]
+        V.low[J+1,I+1] = ew_ridge_low[j,i]
+
+        # MatLab does this, don't think it works
+        # C.low[J,I] = ew_ridge_low[j,i] * numpy.nan
+        # C.low[J,I+1] = ew_ridge_low[j,i] * numpy.nan
+        # C.low[J+1,I] = ew_ridge_low[j,i] * numpy.nan
+        # C.low[J+1,I+1] = ew_ridge_low[j,i] * numpy.nan
+        C.low[J,I] = ew_ridge_low[j,i]
+        C.low[J,I+1] = ew_ridge_low[j,i]
+        C.low[J+1,I] = ew_ridge_low[j,i]
+        C.low[J+1,I+1] = ew_ridge_low[j,i]
+
         if verbose: print(j.size, " folded")
     def invert_exterior_corners(self, matlab=True, verbose=False):
         """The deepest exterior corner is expanded to fill the coarse cell"""
