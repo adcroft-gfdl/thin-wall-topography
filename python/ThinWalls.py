@@ -400,16 +400,27 @@ class ThinWalls(GMesh):
         ns_ridge_low_min = numpy.minimum( U.low[::2,1::2], U.low[1::2,1::2] )
         ns_ridge_low_max = numpy.maximum( U.low[::2,1::2], U.low[1::2,1::2] )
         # Coarse cell index j,i
-        j,i = numpy.nonzero(
-              ( ( ew_ridge_low>ns_ridge_low_min) & (ew_ridge_low>=ns_ridge_low_max ) ) # E-W ridge is the taller ridge
-              & (
-                  ( U.low[::2,1::2] > U.low[1::2,1::2] ) # Southern buttress is taller than north
-                  | (
-                      ( U.low[::2,1::2] >= U.low[1::2,1::2] ) # Southern buttress is equal to the north
-                      & (
-                          ( C.low[::2,::2]+C.low[::2,1::2] > C.low[1::2,::2]+C.low[1::2,1::2] ) | # Southern cells are higher than north on average
-                          ( V.low[:-1:2,::2]+V.low[:-1:2,1::2] > V.low[2::2,::2]+V.low[2::2,1::2] ) # Southern edges are higher than north on average
-                ) ) ) )
+        # j,i = numpy.nonzero(
+        #       ( ( ew_ridge_low>ns_ridge_low_min) & (ew_ridge_low>=ns_ridge_low_max ) ) # E-W ridge is the taller ridge
+        #       & (
+        #           ( U.low[::2,1::2] > U.low[1::2,1::2] ) # Southern buttress is taller than north
+        #           | (
+        #               ( U.low[::2,1::2] >= U.low[1::2,1::2] ) # Southern buttress is equal to the north
+        #               & (
+        #                   ( C.low[::2,::2]+C.low[::2,1::2] > C.low[1::2,::2]+C.low[1::2,1::2] ) | # Southern cells are higher than north on average
+        #                   ( V.low[:-1:2,::2]+V.low[:-1:2,1::2] > V.low[2::2,::2]+V.low[2::2,1::2] ) # Southern edges are higher than north on average
+        #         ) ) ) )
+
+        # E-W ridge is the taller ridge
+        ew_ridges = ( ( ew_ridge_low>ns_ridge_low_min) & (ew_ridge_low>=ns_ridge_low_max ) )
+        high_buttress = ( U.low[::2,1::2]>U.low[1::2,1::2] ) # Southern buttress is taller than north
+        high_cell = (  ( U.low[::2,1::2]==U.low[1::2,1::2] )
+                     & ( C.low[::2,::2]+C.low[::2,1::2]>C.low[1::2,::2]+C.low[1::2,1::2] ) )  # Southern buttress is equal to the north
+        high_edge = (  ( U.low[::2,1::2]==U.low[1::2,1::2] )
+                     & ( C.low[::2,::2]+C.low[::2,1::2]==C.low[1::2,::2]+C.low[1::2,1::2] )
+                     & ( V.low[:-1:2,::2]+V.low[:-1:2,1::2]>V.low[2::2,::2]+V.low[2::2,1::2]) )
+        j,i = numpy.nonzero( ew_ridges & (high_buttress | high_cell | high_edge) )
+
         J,I = 2*j,2*i
         # Outer edges of southern half
         U.low[J,I] = numpy.maximum( U.low[J,I], ew_ridge_low[j,i] )
