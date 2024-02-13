@@ -1,7 +1,23 @@
 from GMesh import GMesh
 import numpy
 
-class Stats:
+class StatsBase(object):
+    """A base class for Stats
+    Provides numpy-like itemized access with "view" (instead of copy) when possible.
+    """
+    __slots__ = ('low', 'ave', 'hgh')
+    def __init__(self, mean=None, min=None, max=None):
+        self.low = min
+        self.ave = mean
+        self.hgh = max
+    def __getitem__(self, key):
+        return StatsBase(mean=self.ave[key], min=self.low[key], max=self.hgh[key])
+    def __setitem__(self, key, value):
+        self.low[key] = value.low
+        self.hgh[key] = value.hgh
+        self.ave[key] = value.ave
+
+class Stats(StatsBase):
     """Container for statistics fields
 
     shape - shape of these arrays
@@ -10,10 +26,9 @@ class Stats:
     ave   - mean value
     """
     def __init__(self, shape, mean=None, min=None, max=None):
+        assert len(shape)==2, "Shape size error. Stats object needs to be strictly two-dimensional."
         self.shape = shape
-        self.low = numpy.zeros(shape)
-        self.hgh = numpy.zeros(shape)
-        self.ave = numpy.zeros(shape)
+        StatsBase.__init__(self, mean=numpy.zeros(shape), min=numpy.zeros(shape), max=numpy.zeros(shape))
         if (mean is not None) and (min is not None) and (max is not None):
             self.set(min, max, mean)
         else:
@@ -24,38 +39,6 @@ class Stats:
         return '<Stats shape:(%i,%i)>'%(self.shape[0], self.shape[1])
     def __copy__(self):
         return Stats(self.shape, mean=self.ave, min=self.low, max=self.hgh)
-    def __getitem__(self, key):
-        key = Stats._convert_key_to_slice(key)
-
-        low = self.low[key]
-        hgh = self.hgh[key]
-        ave = self.ave[key]
-        shape = ave.shape
-        return Stats(shape, mean=ave, min=low, max=hgh)
-    def __setitem__(self, key, value):
-        key = Stats._convert_key_to_slice(key)
-
-        self.low[key] = value.low[:]
-        self.hgh[key] = value.hgh[:]
-        self.ave[key] = value.ave[:]
-    @staticmethod
-    def _convert_key_to_slice(key):
-        """Convert a two-element array key to a tuple of two slices
-        This makes sure the sliced Stats is always 2D.
-        """
-        def single_key_to_slice(key):
-            if key==-1:
-                key_slice = slice(key,None)
-            else:
-                key_slice = slice(key,key+1)
-            return key_slice
-        if isinstance(key, tuple):
-            key = list(key)
-            if not isinstance(key[0],slice): key[0] = single_key_to_slice(key[0])
-            if not isinstance(key[1],slice): key[1] = single_key_to_slice(key[1])
-            return tuple(key)
-        else:
-            return single_key_to_slice(key)
     def copy(self):
         """Returns new instance with copied values"""
         return self.__copy__()
@@ -118,6 +101,18 @@ class Stats:
         self.ave = self.ave.T
         self.hgh = self.hgh.T
         self.shape = self.low.shape
+
+def od(dir):
+    """Returns the opposite direction"""
+    oppo_map = {'N': 'S', 'S': 'N', 'E': 'W', 'W': 'E'}
+    return oppo_map.get(dir, None)
+
+def max_Stats(e1, e2):
+    """Returns a StatsBase object that contains higher stats of the two"""
+    low = numpy.maximum(e1.low, e2.low)
+    ave = numpy.maximum(e1.ave, e2.ave)
+    hgh = numpy.maximum(e1.hgh, e2.hgh)
+    return StatsBase(mean=ave, min=low, max=hgh)
 
 class ThinWalls(GMesh):
     """Container for thin wall topographic data and mesh.
@@ -209,6 +204,140 @@ class ThinWalls(GMesh):
         tmp[0,:] = self.c_simple.ave[0,:]
         tmp[-1,:] = self.c_simple.ave[-1,:]
         self.v_simple.set_equal( tmp )
+    def sec(self, direction, measure='effective'):
+        """
+        Returns a StatsBase object that is a view of the heights at various locations.
+
+        Key maps:
+
+         ----NWN-----NEN----
+         |        |        |
+        NWW  NW   N   NE  NEE
+         |        |        |
+         -----W-------E-----
+         |        |        |
+        SWW  SW   S   SE  SEE
+         |        |        |
+         ----SWS-----SES----
+        """
+        if measure == 'effective':
+            C, U, V = self.c_effective, self.u_effective, self.v_effective
+        elif measure == 'simple':
+            C, U, V = self.c_simple, self.u_simple, self.v_simple
+        else:
+            raise Exception('Measure error')
+
+        seclist = {'N': U[1::2, 1::2], 'S': U[0::2, 1::2], 'E': V[1::2, 1::2], 'W': V[1::2, 0::2],
+                   'NE': C[1::2, 1::2], 'NW': C[1::2, 0::2], 'SE': C[0::2, 1::2], 'SW': C[0::2, 0::2],
+                   'NWN': V[2::2, 0::2], 'NEN': V[2::2, 1::2], 'SWS': V[0:-1:2, 0::2], 'SES': V[0:-1:2, 1::2],
+                   'NEE': U[1::2, 2::2], 'SEE': U[0::2, 2::2], 'NWW': U[1::2, 0:-1:2], 'SWW': U[0::2, 0:-1:2]}
+        assert direction in seclist.keys()
+
+        return seclist[direction]
+
+    def fold_ridges(self, adjust_centers=False, verbose=False):
+        idx_s, ridge_s = self.find_ridge('S', adjust_centers=adjust_centers)
+        idx_n, ridge_n = self.find_ridge('N', adjust_centers=adjust_centers)
+        idx_w, ridge_w = self.find_ridge('W', adjust_centers=adjust_centers)
+        idx_e, ridge_e = self.find_ridge('E', adjust_centers=adjust_centers)
+
+        idx_ns, ridge_ns = self.find_ridge('S', equal=True, adjust_centers=adjust_centers)
+        idx_ew, ridge_ew = self.find_ridge('W', equal=True, adjust_centers=adjust_centers)
+
+        if verbose:
+            print("  S: {}".format(idx_s[0].size))
+            print("  N: {}".format(idx_n[0].size))
+            print("  W: {}".format(idx_w[0].size))
+            print("  E: {}".format(idx_e[0].size))
+            print("  NS: {}".format(idx_ns[0].size))
+            print("  EW: {}".format(idx_ew[0].size))
+
+        self.fold_ridge('S', idx_s, ridge_s)
+        self.fold_ridge('N', idx_n, ridge_n)
+        self.fold_ridge('W', idx_w, ridge_w)
+        self.fold_ridge('E', idx_e, ridge_e)
+        self.fold_ridge_equal('S', idx_ns, ridge_ns)
+        self.fold_ridge_equal('W', idx_ew, ridge_ew)
+
+    def find_ridge(self, dir, equal=False, adjust_centers=True):
+        if dir in ['S', 'N']:
+            # East-West Ridge
+            R0, R1 = self.sec('W'), self.sec('E')
+            # Buttresses at the targeting side (a) (south or north) and opposing side (b) (north or south) of the ridge
+            Ba, Bb = self.sec(dir), self.sec(od(dir))
+            # Cell centers at the two sides of the ridge
+            Ca0, Ca1, Cb0, Cb1 = self.sec(dir+'W'), self.sec(dir+'E'), self.sec(od(dir)+'W'), self.sec(od(dir)+'E')
+            # Outer edges parallel to the E-W ridge
+            Ea0, Ea1, Eb0, Eb1 = self.sec(dir+'W'+dir), self.sec(dir+'E'+dir), self.sec(od(dir)+'W'+od(dir)), self.sec(od(dir)+'E'+od(dir))
+        elif dir in ['W', 'E']:
+            # North-South Ridge
+            R0, R1 = self.sec('N'), self.sec('S')
+            # Buttresses at the targeting side (a) (west or east) and opposing side (b) (east or west) of the ridge
+            Ba, Bb = self.sec(dir), self.sec(od(dir))
+            # Cell centers at the two sides of the ridge
+            Ca0, Ca1, Cb0, Cb1 = self.sec('N'+dir), self.sec('S'+dir), self.sec('N'+od(dir)), self.sec('S'+od(dir))
+            # Outer edges parallel to the N-S ridge
+            Ea0, Ea1, Eb0, Eb1 = self.sec('N'+dir*2), self.sec('S'+dir*2), self.sec('N'+od(dir)*2), self.sec('S'+od(dir)*2)
+        else:
+            raise Exception('find_ridges: "dir" keyword error')
+
+        central = StatsBase(min=numpy.minimum(R0.low, R1.low),
+                          mean=0.5*(R0.ave+R1.ave),
+                          max=numpy.maximum(R0.hgh, R1.hgh))
+        oppos_low_min, oppos_low_max = numpy.minimum(Ba.low, Bb.low), numpy.maximum(Ba.low, Bb.low)
+
+        ridges = ((central.low>oppos_low_min) & (central.low>=oppos_low_max))
+        if equal:
+            equal_sides = ((Ba.low == Bb.low) &
+                           (Ca0.low+Ca1.low == Cb0.low+Cb1.low) & (Ea0.low+Ea1.low == Eb0.low+Eb1.low))
+            idx = numpy.nonzero( ridges & equal_sides )
+        else:
+            # 1. Target side buttress is taller than its opposite
+            high_buttress = (Ba.low > Bb.low)
+            # 2. Equal buttresses. Target side cells are higher on average
+            high_cell = ((Ba.low == Bb.low) & (Ca0.low+Ca1.low > Cb0.low+Cb1.low))
+            # 3. Equal buttresses and cells. Target size outer edges are higher on average
+            high_edge = ((Ba.low == Bb.low) &
+                         (Ca0.low+Ca1.low == Cb0.low+Cb1.low) & (Ea0.low+Ea1.low > Eb0.low+Eb1.low))
+            idx =  numpy.nonzero( ridges & (high_buttress | high_cell | high_edge) )
+
+        # Adjust inner edges
+        R0.low[idx], R1.low[idx] = oppos_low_min[idx], oppos_low_min[idx]
+        Ba.low[idx] = oppos_low_min[idx]
+        if equal:
+            Bb.low[idx] = oppos_low_min[idx]
+
+        # Adjust cell centers at the target side
+        if adjust_centers:
+            # This is the MatLab approach, seems wrong
+            Ca0.low[idx], Ca1.low[idx] = oppos_low_min[idx], oppos_low_min[idx]
+            Ca0.ave[idx], Ca1.ave[idx] = 0.5*(Cb0.ave[idx]+Cb1.ave[idx]), 0.5*(Cb0.ave[idx]+Cb1.ave[idx])
+            Ca0.hgh[idx], Ca1.hgh[idx] = oppos_low_min[idx], oppos_low_min[idx]
+            # The following is slightly different from the MatLab approach, which seems wrong.
+            if equal:
+              Cb0.low[idx], Cb1.low[idx] = oppos_low_min[idx], oppos_low_min[idx]
+              Cb0.ave[idx], Cb1.ave[idx] = 0.5*(Cb0.ave[idx]+Cb1.ave[idx]), 0.5*(Cb0.ave[idx]+Cb1.ave[idx])
+              Cb0.hgh[idx], Cb1.hgh[idx] = oppos_low_min[idx], oppos_low_min[idx]
+
+        return idx, central[idx]
+
+    def fold_ridge(self, dir, idx, central):
+        if dir in ['S', 'N']:
+            E0, E1, E2, E3 = self.sec(dir+'WW'), self.sec(dir+'EE'), self.sec(dir+'W'+dir), self.sec(dir+'E'+dir)
+        elif dir in ['W', 'E']:
+            E0, E1, E2, E3 = self.sec('N'+dir+'N'), self.sec('S'+dir+'S'), self.sec('N'+dir*2), self.sec('S'+dir*2)
+        else:
+            raise Exception('fold_ridges: "dir" keyword error')
+
+        E0[idx] = max_Stats(E0[idx], central)
+        E1[idx] = max_Stats(E1[idx], central)
+        E2[idx] = max_Stats(E2[idx], central)
+        E3[idx] = max_Stats(E3[idx], central)
+
+    def fold_ridge_equal(self, dir, idx, central):
+        self.fold_ridge(dir, idx, central)
+        self.fold_ridge(od(dir), idx, central)
+
     def push_corners(self, update_interior_mean_max=True, verbose=False):
         """Folds out tallest corners. Acts only on "effective" values.
 
@@ -396,30 +525,30 @@ class ThinWalls(GMesh):
         #ew_ridge_ave = 0.5*( V.low[1::2,::2] + V.low[1::2,1::2] )
         if matlab:
             ew_ridge_hgh = numpy.maximum( V.hgh[1::2,::2], V.hgh[1::2,1::2] )
-            ew_ridge_ave = 0.5*( V.low[1::2,::2] + V.low[1::2,1::2] )
+            ew_ridge_ave = 0.5*( V.ave[1::2,::2] + V.ave[1::2,1::2] )
         ns_ridge_low_min = numpy.minimum( U.low[::2,1::2], U.low[1::2,1::2] )
         ns_ridge_low_max = numpy.maximum( U.low[::2,1::2], U.low[1::2,1::2] )
         # Coarse cell index j,i
-        # j,i = numpy.nonzero(
-        #       ( ( ew_ridge_low>ns_ridge_low_min) & (ew_ridge_low>=ns_ridge_low_max ) ) # E-W ridge is the taller ridge
-        #       & (
-        #           ( U.low[::2,1::2] > U.low[1::2,1::2] ) # Southern buttress is taller than north
-        #           | (
-        #               ( U.low[::2,1::2] >= U.low[1::2,1::2] ) # Southern buttress is equal to the north
-        #               & (
-        #                   ( C.low[::2,::2]+C.low[::2,1::2] > C.low[1::2,::2]+C.low[1::2,1::2] ) | # Southern cells are higher than north on average
-        #                   ( V.low[:-1:2,::2]+V.low[:-1:2,1::2] > V.low[2::2,::2]+V.low[2::2,1::2] ) # Southern edges are higher than north on average
-        #         ) ) ) )
+        j,i = numpy.nonzero(
+              ( ( ew_ridge_low>ns_ridge_low_min) & (ew_ridge_low>=ns_ridge_low_max ) ) # E-W ridge is the taller ridge
+              & (
+                  ( U.low[::2,1::2] > U.low[1::2,1::2] ) # Southern buttress is taller than north
+                  | (
+                      ( U.low[::2,1::2] >= U.low[1::2,1::2] ) # Southern buttress is equal to the north
+                      & (
+                          ( C.low[::2,::2]+C.low[::2,1::2] > C.low[1::2,::2]+C.low[1::2,1::2] ) | # Southern cells are higher than north on average
+                          ( V.low[:-1:2,::2]+V.low[:-1:2,1::2] > V.low[2::2,::2]+V.low[2::2,1::2] ) # Southern edges are higher than north on average
+                ) ) ) )
 
-        # E-W ridge is the taller ridge
-        ew_ridges = ( ( ew_ridge_low>ns_ridge_low_min) & (ew_ridge_low>=ns_ridge_low_max ) )
-        high_buttress = ( U.low[::2,1::2]>U.low[1::2,1::2] ) # Southern buttress is taller than north
-        high_cell = (  ( U.low[::2,1::2]==U.low[1::2,1::2] )
-                     & ( C.low[::2,::2]+C.low[::2,1::2]>C.low[1::2,::2]+C.low[1::2,1::2] ) )  # Southern buttress is equal to the north
-        high_edge = (  ( U.low[::2,1::2]==U.low[1::2,1::2] )
-                     & ( C.low[::2,::2]+C.low[::2,1::2]==C.low[1::2,::2]+C.low[1::2,1::2] )
-                     & ( V.low[:-1:2,::2]+V.low[:-1:2,1::2]>V.low[2::2,::2]+V.low[2::2,1::2]) )
-        j,i = numpy.nonzero( ew_ridges & (high_buttress | high_cell | high_edge) )
+        # # E-W ridge is the taller ridge
+        # ew_ridges = ( ( ew_ridge_low>ns_ridge_low_min) & (ew_ridge_low>=ns_ridge_low_max ) )
+        # high_buttress = ( U.low[::2,1::2]>U.low[1::2,1::2] ) # Southern buttress is taller than north
+        # high_cell = (  ( U.low[::2,1::2]==U.low[1::2,1::2] )
+        #              & ( C.low[::2,::2]+C.low[::2,1::2]>C.low[1::2,::2]+C.low[1::2,1::2] ) )  # Southern buttress is equal to the north
+        # high_edge = (  ( U.low[::2,1::2]==U.low[1::2,1::2] )
+        #              & ( C.low[::2,::2]+C.low[::2,1::2]==C.low[1::2,::2]+C.low[1::2,1::2] )
+        #              & ( V.low[:-1:2,::2]+V.low[:-1:2,1::2]>V.low[2::2,::2]+V.low[2::2,1::2]) )
+        # j,i = numpy.nonzero( ew_ridges & (high_buttress | high_cell | high_edge) )
 
         J,I = 2*j,2*i
         # Outer edges of southern half
