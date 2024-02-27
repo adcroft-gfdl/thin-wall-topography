@@ -235,7 +235,72 @@ class ThinWalls(GMesh):
 
         return seclist[direction]
 
+    def push_corners_v2(self, adjust_centers=False, matlab=False, verbose=False):
+        """"A wrapper for push out high corners"""
+        idx_sw, corner_sw = self.find_corner('SW', adjust_centers=adjust_centers, matlab=matlab)
+        idx_se, corner_se = self.find_corner('SE', adjust_centers=adjust_centers, matlab=matlab)
+        idx_nw, corner_nw = self.find_corner('NW', adjust_centers=adjust_centers, matlab=matlab)
+        idx_ne, corner_ne = self.find_corner('NE', adjust_centers=adjust_centers, matlab=matlab)
+
+        if verbose:
+            print("  SW: {}".format(idx_sw[0].size))
+            print("  NW: {}".format(idx_se[0].size))
+            print("  SE: {}".format(idx_nw[0].size))
+            print("  NE: {}".format(idx_ne[0].size))
+
+        self.push_corner('SW', idx_sw, corner_sw)
+        self.push_corner('SE', idx_se, corner_se)
+        self.push_corner('NW', idx_nw, corner_nw)
+        self.push_corner('NE', idx_ne, corner_ne)
+
+    def push_corner(self, dir, idx, corner):
+        assert dir[0]=='S' or dir[0]=='N'
+        assert dir[1]=='W' or dir[1]=='E'
+
+        E0, E1 = self.sec(dir+dir[0]), self.sec(dir+dir[1])
+
+        E0[idx] = max_Stats(E0[idx], corner)
+        E1[idx] = max_Stats(E1[idx], corner)
+
+    def find_corner(self, dir, adjust_centers=True, matlab=False):
+        """Finds out if corner is the highest ridge."""
+        assert dir[0]=='S' or dir[0]=='N'
+        assert dir[1]=='W' or dir[1]=='E'
+        R0, B0 = self.sec(dir[0]), self.sec(od(dir[0]))
+        R1, B1 = self.sec(dir[1]), self.sec(od(dir[1]))
+        C = self.sec(dir)
+
+        inner = StatsBase(min=numpy.minimum(R0.low, R1.low),
+                          mean=0.5*(R0.ave+R1.ave),
+                          max=numpy.maximum(R0.hgh, R1.hgh))
+        opp_ridge = numpy.maximum(B0.low, B1.low)
+        idx = numpy.nonzero( inner.low>opp_ridge )
+
+        # Adjust inner edges
+        R0.low[idx], R1.low[idx] = opp_ridge[idx], opp_ridge[idx]
+        if adjust_centers:
+            opp_mean = (  self.sec(od(dir[0])+dir[1]).ave
+                        + self.sec(dir[0]+od(dir[1])).ave
+                        + self.sec(od(dir[0])+od(dir[1])).ave )/3.0
+            C.low[idx] = opp_ridge[idx]
+            if matlab:
+                C.ave[idx] = opp_mean[idx]
+                C.hgh[idx] = opp_ridge[idx]
+            else:
+                C.ave[idx] = numpy.maximum(C.ave[idx], opp_mean[idx])
+                C.hgh[idx] = numpy.maximum(C.hgh[idx], opp_ridge[idx])
+        if matlab:
+            update_interior_mean_max = False
+        else:
+            update_interior_mean_max = True
+        if update_interior_mean_max:
+            R0.ave[idx], R1.ave[idx] = opp_ridge[idx], opp_ridge[idx]
+            R0.hgh[idx], R1.hgh[idx] = opp_ridge[idx], opp_ridge[idx]
+
+        return idx, inner[idx]
+
     def fold_ridges(self, adjust_centers=False, verbose=False):
+        """A wrapper to fold out ridges in all directions"""
         idx_s, ridge_s = self.find_ridge('S', adjust_centers=adjust_centers)
         idx_n, ridge_n = self.find_ridge('N', adjust_centers=adjust_centers)
         idx_w, ridge_w = self.find_ridge('W', adjust_centers=adjust_centers)
@@ -260,6 +325,7 @@ class ThinWalls(GMesh):
         self.fold_ridge_equal('W', idx_ew, ridge_ew)
 
     def find_ridge(self, dir, equal=False, adjust_centers=True):
+        """Find high center ridges and adjust the inner edges (and cell centers)"""
         if dir in ['S', 'N']:
             # East-West Ridge
             R0, R1 = self.sec('W'), self.sec('E')
@@ -282,8 +348,8 @@ class ThinWalls(GMesh):
             raise Exception('find_ridges: "dir" keyword error')
 
         central = StatsBase(min=numpy.minimum(R0.low, R1.low),
-                          mean=0.5*(R0.ave+R1.ave),
-                          max=numpy.maximum(R0.hgh, R1.hgh))
+                            mean=0.5*(R0.ave+R1.ave),
+                            max=numpy.maximum(R0.hgh, R1.hgh))
         oppos_low_min, oppos_low_max = numpy.minimum(Ba.low, Bb.low), numpy.maximum(Ba.low, Bb.low)
 
         ridges = ((central.low>oppos_low_min) & (central.low>=oppos_low_max))
@@ -319,9 +385,10 @@ class ThinWalls(GMesh):
               Cb0.ave[idx], Cb1.ave[idx] = 0.5*(Cb0.ave[idx]+Cb1.ave[idx]), 0.5*(Cb0.ave[idx]+Cb1.ave[idx])
               Cb0.hgh[idx], Cb1.hgh[idx] = oppos_low_min[idx], oppos_low_min[idx]
 
-        return idx, central[idx]
+        return idx, ridges[idx]
 
-    def fold_ridge(self, dir, idx, central):
+    def fold_ridge(self, dir, idx, ridges):
+        """Fold out ridge at the given direction"""
         if dir in ['S', 'N']:
             E0, E1, E2, E3 = self.sec(dir+'WW'), self.sec(dir+'EE'), self.sec(dir+'W'+dir), self.sec(dir+'E'+dir)
         elif dir in ['W', 'E']:
@@ -329,16 +396,17 @@ class ThinWalls(GMesh):
         else:
             raise Exception('fold_ridges: "dir" keyword error')
 
-        E0[idx] = max_Stats(E0[idx], central)
-        E1[idx] = max_Stats(E1[idx], central)
-        E2[idx] = max_Stats(E2[idx], central)
-        E3[idx] = max_Stats(E3[idx], central)
+        E0[idx] = max_Stats(E0[idx], ridges)
+        E1[idx] = max_Stats(E1[idx], ridges)
+        E2[idx] = max_Stats(E2[idx], ridges)
+        E3[idx] = max_Stats(E3[idx], ridges)
 
-    def fold_ridge_equal(self, dir, idx, central):
-        self.fold_ridge(dir, idx, central)
-        self.fold_ridge(od(dir), idx, central)
+    def fold_ridge_equal(self, dir, idx, ridges):
+        """Fold out ridge for equal cases"""
+        self.fold_ridge(dir, idx, ridges)
+        self.fold_ridge(od(dir), idx, ridges)
 
-    def push_corners(self, update_interior_mean_max=True, verbose=False):
+    def push_corners(self, update_interior_mean_max=True, matlab=False, verbose=False):
         """Folds out tallest corners. Acts only on "effective" values.
 
         A convex corner within a coarse grid cell can be made into a
@@ -348,7 +416,7 @@ class ThinWalls(GMesh):
 
         if verbose: print("Begin push_corners")
         if verbose: print("  SW: ", end="")
-        self.push_corners_sw(update_interior_mean_max=update_interior_mean_max, verbose=verbose) # Push SW
+        self.push_corners_sw(update_interior_mean_max=update_interior_mean_max, matlab=matlab, verbose=verbose) # Push SW
         # Alias
         C, U, V = self.c_effective, self.u_effective, self.v_effective
         # Flip in j direction
@@ -356,19 +424,19 @@ class ThinWalls(GMesh):
         U.flip(axis=0)
         V.flip(axis=0)
         if verbose: print("  NW: ", end="")
-        self.push_corners_sw(update_interior_mean_max=update_interior_mean_max, verbose=verbose) # Push NW
+        self.push_corners_sw(update_interior_mean_max=update_interior_mean_max, matlab=matlab, verbose=verbose) # Push NW
         # Flip in i direction
         C.flip(axis=1)
         U.flip(axis=1)
         V.flip(axis=1)
         if verbose: print("  NE: ", end="")
-        self.push_corners_sw(update_interior_mean_max=update_interior_mean_max, verbose=verbose) # Push NE
+        self.push_corners_sw(update_interior_mean_max=update_interior_mean_max, matlab=matlab, verbose=verbose) # Push NE
         # Flip in j direction
         C.flip(axis=0)
         U.flip(axis=0)
         V.flip(axis=0)
         if verbose: print("  SE: ", end="")
-        self.push_corners_sw(update_interior_mean_max=update_interior_mean_max, verbose=verbose) # Push SE
+        self.push_corners_sw(update_interior_mean_max=update_interior_mean_max, matlab=matlab, verbose=verbose) # Push SE
         # Flip in i direction
         C.flip(axis=1)
         U.flip(axis=1)
