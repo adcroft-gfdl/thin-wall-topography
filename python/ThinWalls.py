@@ -299,6 +299,29 @@ class ThinWalls(GMesh):
 
         return idx, inner[idx]
 
+    def lower_buttress(self, adjust_mean=True, verbose=False):
+        """Remove the tallest inner edge"""
+        for dir in ['S', 'N', 'W', 'E']:
+            idx = self.find_buttress(dir, adjust_mean=adjust_mean)
+            if verbose:
+                print(" {:}: {}".format(dir, idx[0].size))
+
+    def find_buttress(self, dir, adjust_mean=True):
+        """Find the tallest inner edge"""
+        R = self.sec(dir)
+        if dir in ['S', 'N']:
+            B1, B2, B3 = self.sec('W'), self.sec('E'), self.sec(od(dir))
+        elif dir in ['W', 'E']:
+            B1, B2, B3 = self.sec('S'), self.sec('N'), self.sec(od(dir))
+        oppo3 = numpy.maximum(numpy.maximum(B1.low, B2.low), B3.low)
+        idx = numpy.nonzero(R.low > oppo3)
+
+        # adjust interior edges
+        R.low[idx] = oppo3[idx]
+        if adjust_mean:
+            R.ave[idx] = numpy.maximum(numpy.maximum(B1.ave, B2.ave), B3.ave)
+        return idx
+
     def fold_ridges(self, adjust_centers=False, verbose=False):
         """A wrapper to fold out ridges in all directions"""
         idx_s, ridge_s = self.find_ridge('S', adjust_centers=adjust_centers)
