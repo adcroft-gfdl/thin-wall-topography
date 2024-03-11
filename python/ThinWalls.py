@@ -103,9 +103,17 @@ class Stats(StatsBase):
         self.shape = self.low.shape
 
 def od(dir):
-    """Returns the opposite direction"""
+    """Returns the name of the opposite direction"""
     oppo_map = {'N': 'S', 'S': 'N', 'E': 'W', 'W': 'E'}
     return oppo_map.get(dir, None)
+def exterior_edges(dir):
+    """Returns the name of two exterior edge sections at the given direction.
+    The order of the pair is always (west, east) and (south, north).
+    """
+    if dir in ['S','N']:
+        return (dir+'W'+dir, dir+'E'+dir)
+    elif dir in ['W','E']:
+        return ('S'+dir+dir, 'N'+dir+dir)
 
 def max_Stats(e1, e2):
     """Returns a StatsBase object that contains higher stats of the two"""
@@ -208,7 +216,7 @@ class ThinWalls(GMesh):
         """
         Returns a StatsBase object that is a view of the heights at various locations.
 
-        Key maps:
+        Key map:
 
          ----NWN-----NEN----
          |        |        |
@@ -235,25 +243,25 @@ class ThinWalls(GMesh):
 
         return seclist[direction]
 
-    def push_corners_v2(self, adjust_centers=False, matlab=False, verbose=False):
+    def push_interior_corners(self, adjust_centers=True, matlab=False, verbose=False):
         """"A wrapper for push out high corners"""
-        idx_sw, corner_sw = self.find_corner('SW', adjust_centers=adjust_centers, matlab=matlab)
-        idx_se, corner_se = self.find_corner('SE', adjust_centers=adjust_centers, matlab=matlab)
-        idx_nw, corner_nw = self.find_corner('NW', adjust_centers=adjust_centers, matlab=matlab)
-        idx_ne, corner_ne = self.find_corner('NE', adjust_centers=adjust_centers, matlab=matlab)
+        idx_sw, corner_sw = self.find_interior_corner('SW', adjust_centers=adjust_centers, matlab=matlab)
+        idx_se, corner_se = self.find_interior_corner('SE', adjust_centers=adjust_centers, matlab=matlab)
+        idx_nw, corner_nw = self.find_interior_corner('NW', adjust_centers=adjust_centers, matlab=matlab)
+        idx_ne, corner_ne = self.find_interior_corner('NE', adjust_centers=adjust_centers, matlab=matlab)
 
         if verbose:
             print("  SW: {}".format(idx_sw[0].size))
-            print("  NW: {}".format(idx_se[0].size))
-            print("  SE: {}".format(idx_nw[0].size))
+            print("  NW: {}".format(idx_nw[0].size))
             print("  NE: {}".format(idx_ne[0].size))
+            print("  SE: {}".format(idx_se[0].size))
 
-        self.push_corner('SW', idx_sw, corner_sw)
-        self.push_corner('SE', idx_se, corner_se)
-        self.push_corner('NW', idx_nw, corner_nw)
-        self.push_corner('NE', idx_ne, corner_ne)
+        self.push_interior_corner('SW', idx_sw, corner_sw)
+        self.push_interior_corner('SE', idx_se, corner_se)
+        self.push_interior_corner('NW', idx_nw, corner_nw)
+        self.push_interior_corner('NE', idx_ne, corner_ne)
 
-    def push_corner(self, dir, idx, corner):
+    def push_interior_corner(self, dir, idx, corner):
         assert dir[0]=='S' or dir[0]=='N'
         assert dir[1]=='W' or dir[1]=='E'
 
@@ -262,22 +270,22 @@ class ThinWalls(GMesh):
         E0[idx] = max_Stats(E0[idx], corner)
         E1[idx] = max_Stats(E1[idx], corner)
 
-    def find_corner(self, dir, adjust_centers=True, matlab=False):
+    def find_interior_corner(self, dir, adjust_centers=True, matlab=False):
         """Finds out if corner is the highest ridge."""
         assert dir[0]=='S' or dir[0]=='N'
         assert dir[1]=='W' or dir[1]=='E'
-        R0, B0 = self.sec(dir[0]), self.sec(od(dir[0]))
-        R1, B1 = self.sec(dir[1]), self.sec(od(dir[1]))
+        R1, R2 = self.sec(dir[0]), self.sec(dir[1])
+        B1, B2 = self.sec(od(dir[0])), self.sec(od(dir[1]))
         C = self.sec(dir)
 
-        inner = StatsBase(min=numpy.minimum(R0.low, R1.low),
-                          mean=0.5*(R0.ave+R1.ave),
-                          max=numpy.maximum(R0.hgh, R1.hgh))
-        opp_ridge = numpy.maximum(B0.low, B1.low)
+        inner = StatsBase(min=numpy.minimum(R1.low, R2.low),
+                          mean=0.5*(R1.ave+R2.ave),
+                          max=numpy.maximum(R1.hgh, R2.hgh))
+        opp_ridge = numpy.maximum(B1.low, B2.low)
         idx = numpy.nonzero( inner.low>opp_ridge )
 
         # Adjust inner edges
-        R0.low[idx], R1.low[idx] = opp_ridge[idx], opp_ridge[idx]
+        R1.low[idx], R2.low[idx] = opp_ridge[idx], opp_ridge[idx]
         if adjust_centers:
             opp_mean = (  self.sec(od(dir[0])+dir[1]).ave
                         + self.sec(dir[0]+od(dir[1])).ave
@@ -294,20 +302,25 @@ class ThinWalls(GMesh):
         else:
             update_interior_mean_max = True
         if update_interior_mean_max:
-            R0.ave[idx], R1.ave[idx] = opp_ridge[idx], opp_ridge[idx]
-            R0.hgh[idx], R1.hgh[idx] = opp_ridge[idx], opp_ridge[idx]
+            R1.ave[idx], R2.ave[idx] = opp_ridge[idx], opp_ridge[idx] # HW ???
+            R1.hgh[idx], R2.hgh[idx] = opp_ridge[idx], opp_ridge[idx]
 
         return idx, inner[idx]
 
-    def lower_buttress(self, adjust_mean=True, verbose=False):
-        """Remove the tallest inner edge"""
+    def lower_interior_buttresses(self, adjust_mean=True, matlab=False, verbose=False):
+        """A wrapper to find and remove the tallest inner edge at all directions"""
+        if matlab:
+            adjust_mean = False
         for dir in ['S', 'N', 'W', 'E']:
-            idx = self.find_buttress(dir, adjust_mean=adjust_mean)
+            idx = self.find_interior_buttress(dir, adjust_mean=adjust_mean)
             if verbose:
-                print(" {:}: {}".format(dir, idx[0].size))
-
-    def find_buttress(self, dir, adjust_mean=True):
-        """Find the tallest inner edge"""
+                print("low {:}: {}".format(dir, idx[0].size))
+            if matlab:
+                idx = self.find_interior_buttress_mean(dir)
+                if verbose:
+                    print("ave {:}: {}".format(dir, idx[0].size))
+    def find_interior_buttress(self, dir, adjust_mean=True):
+        """Find and remove the tallest inner edge"""
         R = self.sec(dir)
         if dir in ['S', 'N']:
             B1, B2, B3 = self.sec('W'), self.sec('E'), self.sec(od(dir))
@@ -319,18 +332,32 @@ class ThinWalls(GMesh):
         # adjust interior edges
         R.low[idx] = oppo3[idx]
         if adjust_mean:
-            R.ave[idx] = numpy.maximum(numpy.maximum(B1.ave, B2.ave), B3.ave)
+            R.ave[idx] = numpy.maximum(numpy.maximum(B1.ave[idx], B2.ave[idx]), B3.ave[idx])
         return idx
 
-    def fold_ridges(self, adjust_centers=False, verbose=False):
-        """A wrapper to fold out ridges in all directions"""
-        idx_s, ridge_s = self.find_ridge('S', adjust_centers=adjust_centers)
-        idx_n, ridge_n = self.find_ridge('N', adjust_centers=adjust_centers)
-        idx_w, ridge_w = self.find_ridge('W', adjust_centers=adjust_centers)
-        idx_e, ridge_e = self.find_ridge('E', adjust_centers=adjust_centers)
+    def find_interior_buttress_mean(self, dir):
+        """Find and remove the tallest inner edge"""
+        R = self.sec(dir)
+        if dir in ['S', 'N']:
+            B1, B2, B3 = self.sec('W'), self.sec('E'), self.sec(od(dir))
+        elif dir in ['W', 'E']:
+            B1, B2, B3 = self.sec('S'), self.sec('N'), self.sec(od(dir))
+        oppo3 = numpy.maximum(numpy.maximum(B1.ave, B2.ave), B3.ave)
+        idx = numpy.nonzero(R.ave > oppo3)
 
-        idx_ns, ridge_ns = self.find_ridge('S', equal=True, adjust_centers=adjust_centers)
-        idx_ew, ridge_ew = self.find_ridge('W', equal=True, adjust_centers=adjust_centers)
+        # adjust interior edges
+        R.ave[idx] = oppo3[idx]
+        return idx
+
+    def fold_interior_ridges(self, adjust_centers=False, adjust_low_only=False, verbose=False):
+        """A wrapper to fold out ridges in all directions"""
+        idx_s, ridge_s = self.find_interior_ridge('S', adjust_centers=adjust_centers, adjust_low_only=adjust_low_only)
+        idx_n, ridge_n = self.find_interior_ridge('N', adjust_centers=adjust_centers, adjust_low_only=adjust_low_only)
+        idx_w, ridge_w = self.find_interior_ridge('W', adjust_centers=adjust_centers, adjust_low_only=adjust_low_only)
+        idx_e, ridge_e = self.find_interior_ridge('E', adjust_centers=adjust_centers, adjust_low_only=adjust_low_only)
+
+        idx_ns, ridge_ns = self.find_interior_ridge('S', equal=True, adjust_centers=adjust_centers)
+        idx_ew, ridge_ew = self.find_interior_ridge('W', equal=True, adjust_centers=adjust_centers)
 
         if verbose:
             print("  S: {}".format(idx_s[0].size))
@@ -340,14 +367,14 @@ class ThinWalls(GMesh):
             print("  NS: {}".format(idx_ns[0].size))
             print("  EW: {}".format(idx_ew[0].size))
 
-        self.fold_ridge('S', idx_s, ridge_s)
-        self.fold_ridge('N', idx_n, ridge_n)
-        self.fold_ridge('W', idx_w, ridge_w)
-        self.fold_ridge('E', idx_e, ridge_e)
-        self.fold_ridge_equal('S', idx_ns, ridge_ns)
-        self.fold_ridge_equal('W', idx_ew, ridge_ew)
+        self.fold_interior_ridge('S', idx_s, ridge_s, adjust_low_only=adjust_low_only)
+        self.fold_interior_ridge('N', idx_n, ridge_n, adjust_low_only=adjust_low_only)
+        self.fold_interior_ridge('W', idx_w, ridge_w, adjust_low_only=adjust_low_only)
+        self.fold_interior_ridge('E', idx_e, ridge_e, adjust_low_only=adjust_low_only)
+        self.fold_interior_ridge_equal('S', idx_ns, ridge_ns)
+        self.fold_interior_ridge_equal('W', idx_ew, ridge_ew)
 
-    def find_ridge(self, dir, equal=False, adjust_centers=True):
+    def find_interior_ridge(self, dir, equal=False, adjust_centers=True, adjust_low_only=False):
         """Find high center ridges and adjust the inner edges (and cell centers)"""
         if dir in ['S', 'N']:
             # East-West Ridge
@@ -400,17 +427,19 @@ class ThinWalls(GMesh):
         if adjust_centers:
             # This is the MatLab approach, seems wrong
             Ca0.low[idx], Ca1.low[idx] = oppos_low_min[idx], oppos_low_min[idx]
-            Ca0.ave[idx], Ca1.ave[idx] = 0.5*(Cb0.ave[idx]+Cb1.ave[idx]), 0.5*(Cb0.ave[idx]+Cb1.ave[idx])
-            Ca0.hgh[idx], Ca1.hgh[idx] = oppos_low_min[idx], oppos_low_min[idx]
+            if not adjust_low_only:
+                Ca0.ave[idx], Ca1.ave[idx] = 0.5*(Cb0.ave[idx]+Cb1.ave[idx]), 0.5*(Cb0.ave[idx]+Cb1.ave[idx])
+                Ca0.hgh[idx], Ca1.hgh[idx] = oppos_low_min[idx], oppos_low_min[idx]
             # The following is slightly different from the MatLab approach, which seems wrong.
             if equal:
               Cb0.low[idx], Cb1.low[idx] = oppos_low_min[idx], oppos_low_min[idx]
-              Cb0.ave[idx], Cb1.ave[idx] = 0.5*(Cb0.ave[idx]+Cb1.ave[idx]), 0.5*(Cb0.ave[idx]+Cb1.ave[idx])
-              Cb0.hgh[idx], Cb1.hgh[idx] = oppos_low_min[idx], oppos_low_min[idx]
+              if not adjust_low_only:
+                  Cb0.ave[idx], Cb1.ave[idx] = 0.5*(Cb0.ave[idx]+Cb1.ave[idx]), 0.5*(Cb0.ave[idx]+Cb1.ave[idx])
+                  Cb0.hgh[idx], Cb1.hgh[idx] = oppos_low_min[idx], oppos_low_min[idx]
 
-        return idx, ridges[idx]
+        return idx, central[idx]
 
-    def fold_ridge(self, dir, idx, ridges):
+    def fold_interior_ridge(self, dir, idx, ridges, adjust_low_only=False):
         """Fold out ridge at the given direction"""
         if dir in ['S', 'N']:
             E0, E1, E2, E3 = self.sec(dir+'WW'), self.sec(dir+'EE'), self.sec(dir+'W'+dir), self.sec(dir+'E'+dir)
@@ -419,15 +448,175 @@ class ThinWalls(GMesh):
         else:
             raise Exception('fold_ridges: "dir" keyword error')
 
-        E0[idx] = max_Stats(E0[idx], ridges)
-        E1[idx] = max_Stats(E1[idx], ridges)
-        E2[idx] = max_Stats(E2[idx], ridges)
-        E3[idx] = max_Stats(E3[idx], ridges)
+        if adjust_low_only:
+            E0.low[idx] = numpy.maximum(E0.low[idx], ridges.low)
+            E1.low[idx] = numpy.maximum(E1.low[idx], ridges.low)
+            E2.low[idx] = numpy.maximum(E2.low[idx], ridges.low)
+            E3.low[idx] = numpy.maximum(E3.low[idx], ridges.low)
+        else:
+            E0[idx] = max_Stats(E0[idx], ridges)
+            E1[idx] = max_Stats(E1[idx], ridges)
+            E2[idx] = max_Stats(E2[idx], ridges)
+            E3[idx] = max_Stats(E3[idx], ridges)
 
-    def fold_ridge_equal(self, dir, idx, ridges):
+    def fold_interior_ridge_equal(self, dir, idx, ridges):
         """Fold out ridge for equal cases"""
-        self.fold_ridge(dir, idx, ridges)
-        self.fold_ridge(od(dir), idx, ridges)
+        self.fold_interior_ridge(dir, idx, ridges)
+        self.fold_interior_ridge(od(dir), idx, ridges)
+
+    def find_deepest_exterior_corner(self, dir, matlab=False, adjust_centers=True):
+        # Exterior corner of interest
+        ec_u = self.sec(dir+dir[1])
+        ec_v = self.sec(dir+dir[0])
+
+        # The following four edges should be identical!
+        # Interior corner
+        ic_u = self.sec(dir[1])
+        ic_v = self.sec(dir[0])
+
+        # opposing interior corner
+        ic_opu = self.sec(od(dir[1]))
+        ic_opv = self.sec(od(dir[0]))
+
+        # opposing exterior corner
+        ec_opu = self.sec(od(dir[0])+od(dir[1])+od(dir[1]))
+        ec_opv = self.sec(od(dir[0])+od(dir[1])+od(dir[0]))
+
+        # neighor exterior corner in the zonal direction
+        ec_nzu = self.sec(dir[0]+od(dir[1])+od(dir[1]))
+        ec_nzv = self.sec(dir[0]+od(dir[1])+dir[0])
+
+        # neighor exterior corner in the meridional direction
+        ec_nmu = self.sec(od(dir[0])+dir[1]+dir[1])
+        ec_nmv = self.sec(od(dir[0])+dir[1]+od(dir[0]))
+
+        crnr_ex = numpy.maximum(ec_u.low, ec_v.low)
+        crnr_ex_op = numpy.minimum(numpy.maximum(ec_opu.low, ec_opv.low),
+                                   numpy.minimum(numpy.maximum(ec_nzu.low, ec_nzv.low),
+                                                 numpy.maximum(ec_nmu.low, ec_nmv.low)))
+        crnr_in = numpy.minimum(ic_u.low, ic_v.low)
+        crnr_in_nz = numpy.maximum(ic_u.low, ic_opv.low)
+        crnr_in_nm = numpy.maximum(ic_v.low, ic_opu.low)
+
+        idx = numpy.nonzero( (crnr_ex < crnr_ex_op) & (crnr_ex < crnr_in) )
+
+        inner = StatsBase(min=numpy.minimum(crnr_in_nz, crnr_in_nm),
+                          mean=0.5*(crnr_in_nz+crnr_in_nm),
+                          max=numpy.maximum(crnr_in_nm, crnr_in_nm))
+
+        if matlab:
+            adjust_centers = False
+        # adjust inner edges
+        if matlab:
+            ic_u.low[idx] = crnr_ex[idx]
+            ic_v.low[idx] = crnr_ex[idx]
+            ic_opu.low[idx] = crnr_ex[idx]
+            ic_opv.low[idx] = crnr_ex[idx]
+        else:
+            ic_u.low[idx] = numpy.minimum(ic_u.low[idx], crnr_ex[idx])
+            ic_v.low[idx] = numpy.minimum(ic_v.low[idx], crnr_ex[idx])
+            ic_opu.low[idx] = numpy.minimum(ic_opu.low[idx], crnr_ex[idx])
+            ic_opv.low[idx] = numpy.minimum(ic_opv.low[idx], crnr_ex[idx])
+
+        if adjust_centers:
+            self.sec('SW').low[idx] = numpy.minimum(self.sec('SW').low[idx], crnr_ex[idx])
+            self.sec('SE').low[idx] = numpy.minimum(self.sec('SE').low[idx], crnr_ex[idx])
+            self.sec('NW').low[idx] = numpy.minimum(self.sec('NW').low[idx], crnr_ex[idx])
+            self.sec('NE').low[idx] = numpy.minimum(self.sec('NE').low[idx], crnr_ex[idx])
+        return idx, inner[idx]
+
+    def expand_interior_corner(self, dir, idx, inners, matlab=False):
+        # opposing exterior corner
+        ec_opu = self.sec(od(dir[0])+od(dir[1])+od(dir[1]))
+        ec_opv = self.sec(od(dir[0])+od(dir[1])+od(dir[0]))
+
+        # neighor exterior corner in the zonal direction
+        ec_nzu = self.sec(dir[0]+od(dir[1])+od(dir[1]))
+        ec_nzv = self.sec(dir[0]+od(dir[1])+dir[0])
+
+        # neighor exterior corner in the meridional direction
+        ec_nmu = self.sec(od(dir[0])+dir[1]+dir[1])
+        ec_nmv = self.sec(od(dir[0])+dir[1]+od(dir[0]))
+
+        if matlab:
+            ec_opu[idx] = max_Stats(ec_opu[idx], inners)
+            ec_opv[idx] = max_Stats(ec_opv[idx], inners)
+            ec_nzu[idx] = max_Stats(ec_nzu[idx], inners)
+            ec_nzv[idx] = max_Stats(ec_nzv[idx], inners)
+            ec_nmu[idx] = max_Stats(ec_nmu[idx], inners)
+            ec_nmv[idx] = max_Stats(ec_nmv[idx], inners)
+        else:
+            ec_opu.low[idx] = numpy.maximum(ec_opu.low[idx], inners.low)
+            ec_opv.low[idx] = numpy.maximum(ec_opv.low[idx], inners.low)
+            ec_nzu.low[idx] = numpy.maximum(ec_nzu.low[idx], inners.low)
+            ec_nzv.low[idx] = numpy.maximum(ec_nzv.low[idx], inners.low)
+            ec_nmu.low[idx] = numpy.maximum(ec_nmu.low[idx], inners.low)
+            ec_nmv.low[idx] = numpy.maximum(ec_nmv.low[idx], inners.low)
+
+    def expand_interior_corners(self, adjust_centers=False, matlab=False, verbose=False):
+        # Check if all inner edges are equal (they should be at this step)
+        s, n, w, e = self.sec('S').low, self.sec('N').low, self.sec('W').low, self.sec('E').low
+        assert numpy.all(s==n) and numpy.all(w==e) and numpy.all(s==w), 'Not all inner edges are equal before exterior corner.'
+
+        # Preserve the deepest exterior corner
+        idx_sw, corner_sw = self.find_deepest_exterior_corner('SW', adjust_centers=adjust_centers, matlab=matlab)
+        idx_se, corner_se = self.find_deepest_exterior_corner('SE', adjust_centers=adjust_centers, matlab=matlab)
+        idx_nw, corner_nw = self.find_deepest_exterior_corner('NW', adjust_centers=adjust_centers, matlab=matlab)
+        idx_ne, corner_ne = self.find_deepest_exterior_corner('NE', adjust_centers=adjust_centers, matlab=matlab)
+
+        if verbose:
+            print("  SW: {}".format(idx_sw[0].size))
+            print("  NW: {}".format(idx_se[0].size))
+            print("  SE: {}".format(idx_nw[0].size))
+            print("  NE: {}".format(idx_ne[0].size))
+
+        self.expand_interior_corner('SW', idx_sw, corner_sw, matlab=matlab)
+        self.expand_interior_corner('SE', idx_se, corner_se, matlab=matlab)
+        self.expand_interior_corner('NW', idx_nw, corner_nw, matlab=matlab)
+        self.expand_interior_corner('NE', idx_ne, corner_ne, matlab=matlab)
+
+    def find_connection(self, dir1, dir2):
+        """Find cell walls need to raise in a given pathway
+
+        """
+        assert (dir1 in ['S', 'N', 'W', 'E']) and (dir2 in ['S', 'N', 'W', 'E'])
+
+        sec1a, sec1b = exterior_edges(dir1)
+        sec2a, sec2b = exterior_edges(dir2)
+
+        w1 = numpy.minimum( self.sec(sec1a).low, self.sec(sec1b).low )
+        w2 = numpy.minimum( self.sec(sec2a).low, self.sec(sec2b).low )
+        sills = self.sec('S').low
+
+        return numpy.nonzero((sills>w1) & (w1==w2)), numpy.nonzero((sills>w1) & (w1>w2)), numpy.nonzero((sills>w2) & (w1<w2))
+
+    def limit_connection(self, paths=[], verbose=False):
+        if verbose:
+            print('limit connections')
+        idx = dict().fromkeys(['S', 'N', 'W', 'E'])
+        for key in idx.keys():
+            idx[key] = numpy.array([[],[]], dtype=numpy.int64)
+
+        for ip in paths:
+            d1, d2 = ip[0], ip[1]
+            i0, i1, i2 = self.find_connection(d1, d2)
+            if verbose:
+                print("  {:s} wall raised from {:s} pathway: {:d}".format(d1, ip, i1[0].size))
+                print("  {:s} wall raised from {:s} pathway: {:d}".format(d2, ip, i2[0].size))
+                print("  Equal {:} and {:s} walls raised from {:s} pathway: {:d}".format(d1, d2, ip, i0[0].size))
+            idx[d1] = tuple(numpy.concatenate((idx[d1], numpy.array(i0), numpy.array(i1)), axis=1))
+            idx[d2] = tuple(numpy.concatenate((idx[d2], numpy.array(i0), numpy.array(i2)), axis=1))
+
+        for ns in ['S', 'N']:
+            for ew in ['W', 'E']:
+                self.sec(ns+ew+ns).low[idx[ns]] = numpy.maximum(self.sec(ns+ew+ns).low[idx[ns]], self.sec('S').low[idx[ns]])
+                self.sec(ns+ew+ew).low[idx[ew]] = numpy.maximum(self.sec(ns+ew+ew).low[idx[ew]], self.sec('S').low[idx[ew]])
+
+    def limit_connections(self, verbose=False):
+        # Do straight then corner
+        self.limit_connection(paths=['SN', 'WE'], verbose=verbose)
+        self.limit_connection(paths=['SW', 'SE', 'NW', 'NE'], verbose=verbose)
+        # self.limit_connection(paths=[SN', 'SW', 'SE', 'NW', 'NE', 'WE'], verbose=verbose)
 
     def push_corners(self, update_interior_mean_max=True, matlab=False, verbose=False):
         """Folds out tallest corners. Acts only on "effective" values.
@@ -652,10 +841,10 @@ class ThinWalls(GMesh):
             V.ave[J,I] = numpy.maximum( V.ave[J,I], ew_ridge_ave[j,i] )
             V.ave[J,I+1] = numpy.maximum( V.ave[J,I+1], ew_ridge_ave[j,i] )
             U.ave[J,I+2] = numpy.maximum( U.ave[J,I+2], ew_ridge_ave[j,i] )
-            U.hgh[J,I] = numpy.maximum( U.ave[J,I], ew_ridge_hgh[j,i] )
-            V.hgh[J,I] = numpy.maximum( V.ave[J,I], ew_ridge_hgh[j,i] )
-            V.hgh[J,I+1] = numpy.maximum( V.ave[J,I+1], ew_ridge_hgh[j,i] )
-            U.hgh[J,I+2] = numpy.maximum( U.ave[J,I+2], ew_ridge_hgh[j,i] )
+            U.hgh[J,I] = numpy.maximum( U.hgh[J,I], ew_ridge_hgh[j,i] )
+            V.hgh[J,I] = numpy.maximum( V.hgh[J,I], ew_ridge_hgh[j,i] )
+            V.hgh[J,I+1] = numpy.maximum( V.hgh[J,I+1], ew_ridge_hgh[j,i] )
+            U.hgh[J,I+2] = numpy.maximum( U.hgh[J,I+2], ew_ridge_hgh[j,i] )
         # Replace E-W ridge
         V.low[J+1,I] = ns_ridge_low_min[j,i]
         V.low[J+1,I+1] = ns_ridge_low_min[j,i]
@@ -747,7 +936,7 @@ class ThinWalls(GMesh):
         C.low[J+1,I+1] = ew_ridge_low[j,i]
 
         if verbose: print(j.size, " folded")
-    def invert_exterior_corners(self, matlab=True, verbose=False):
+    def invert_exterior_corners(self, matlab=False, verbose=False):
         """The deepest exterior corner is expanded to fill the coarse cell"""
         if verbose: print("Begin invert_exterior_corners")
         # Alias
@@ -1064,7 +1253,7 @@ class ThinWalls(GMesh):
         sw_to_nw = numpy.maximum( sw_exit, sw_to_nw )
 
         return se_to_ne, se_to_nw, sw_to_ne, sw_to_nw
-    def limit_NS_EW_connections(self, ns_deepest_connection, ew_deepest_connection):
+    def limit_NS_EW_connections(self, ns_deepest_connection, ew_deepest_connection, verbose=False):
         """Modify outer edges to satisfy NS and EW deepest connections"""
         # Alias
         U,V = self.u_effective.low,self.v_effective.low
@@ -1073,19 +1262,24 @@ class ThinWalls(GMesh):
         e = numpy.minimum( U[::2,2::2], U[1::2,2::2] )
         w = numpy.minimum( U[::2,:-1:2], U[1::2,:-1:2] )
 
+        if verbose: print("limit_NS_EW_connections")
         needed = ns_deepest_connection > numpy.maximum( n, s )
         j,i = numpy.nonzero( needed & ( s>=n ) ); J,I=2*j,2*i
+        if verbose: print("  S: ", j.size, " raised")
         V[J,I] = numpy.maximum( V[J,I], ns_deepest_connection[j,i] )
         V[J,I+1] = numpy.maximum( V[J,I+1], ns_deepest_connection[j,i] )
         j,i = numpy.nonzero( needed & ( s<=n ) ); J,I=2*j,2*i
+        if verbose: print("  N: ", j.size, " raised")
         V[J+2,I] = numpy.maximum( V[J+2,I], ns_deepest_connection[j,i] )
         V[J+2,I+1] = numpy.maximum( V[J+2,I+1], ns_deepest_connection[j,i] )
 
         needed = ew_deepest_connection > numpy.maximum( e, w )
         j,i = numpy.nonzero( needed & ( w>=e ) ); J,I=2*j,2*i
+        if verbose: print("  W: ", j.size, " raised")
         U[J,I] = numpy.maximum( U[J,I], ew_deepest_connection[j,i] )
         U[J+1,I] = numpy.maximum( U[J+1,I], ew_deepest_connection[j,i] )
         j,i = numpy.nonzero( needed & ( w<=e ) ); J,I=2*j,2*i
+        if verbose: print("  E: ", j.size, " raised")
         U[J,I+2] = numpy.maximum( U[J,I+2], ew_deepest_connection[j,i] )
         U[J+1,I+2] = numpy.maximum( U[J+1,I+2], ew_deepest_connection[j,i] )
     def diagnose_corner_pathways(self, measure='effective'):
@@ -1172,7 +1366,7 @@ class ThinWalls(GMesh):
         se_to_nw = numpy.maximum( se_to_nw, s_e_exit )
 
         return sw_to_sw, sw_to_nw, se_to_sw, se_to_nw
-    def limit_corner_connections(self, sw_deepest_connection, se_deepest_connection, ne_deepest_connection, nw_deepest_connection):
+    def limit_corner_connections(self, sw_deepest_connection, se_deepest_connection, ne_deepest_connection, nw_deepest_connection, verbose=False):
         """Modify outer edges to satisfy deepest corner connections"""
         # Alias
         U, V = self.u_effective.low, self.v_effective.low
@@ -1181,37 +1375,51 @@ class ThinWalls(GMesh):
         e = numpy.minimum( U[::2,2::2], U[1::2,2::2] )
         w = numpy.minimum( U[::2,:-1:2], U[1::2,:-1:2] )
 
+        if verbose: print('limit_corner_connections')
         needed = sw_deepest_connection > numpy.maximum( s, w )
         j,i = numpy.nonzero( needed & ( s>=w ) ); J,I=2*j,2*i
         V[J,I] = numpy.maximum( V[J,I], sw_deepest_connection[j,i] )
         V[J,I+1] = numpy.maximum( V[J,I+1], sw_deepest_connection[j,i] )
+        if verbose: print("  SW corner S: ", j.size, " raised")
         j,i = numpy.nonzero( needed & ( s<=w ) ); J,I=2*j,2*i
         U[J,I] = numpy.maximum( U[J,I], sw_deepest_connection[j,i] )
         U[J+1,I] = numpy.maximum( U[J+1,I], sw_deepest_connection[j,i] )
+        if verbose: print("  SW corner W: ", j.size, " raised")
 
         needed = se_deepest_connection > numpy.maximum( s, e )
         j,i = numpy.nonzero( needed & ( s>=e ) ); J,I=2*j,2*i
+        if verbose: print("  SE corner S: ", j.size, " raised")
         V[J,I] = numpy.maximum( V[J,I], se_deepest_connection[j,i] )
         V[J,I+1] = numpy.maximum( V[J,I+1], se_deepest_connection[j,i] )
         j,i = numpy.nonzero( needed & ( s<=e ) ); J,I=2*j,2*i
+        if verbose: print("  SE corner E: ", j.size, " raised")
         U[J,I+2] = numpy.maximum( U[J,I+2], se_deepest_connection[j,i] )
         U[J+1,I+2] = numpy.maximum( U[J+1,I+2], se_deepest_connection[j,i] )
 
         needed = ne_deepest_connection > numpy.maximum( n, e )
         j,i = numpy.nonzero( needed & ( n>=e ) ); J,I=2*j,2*i
+        if verbose: print("  NE corner N: ", j.size, " raised")
         V[J+2,I] = numpy.maximum( V[J+2,I], ne_deepest_connection[j,i] )
         V[J+2,I+1] = numpy.maximum( V[J+2,I+1], ne_deepest_connection[j,i] )
         j,i = numpy.nonzero( needed & ( n<=e ) ); J,I=2*j,2*i
+        if verbose: print("  NE corner E: ", j.size, " raised")
         U[J,I+2] = numpy.maximum( U[J,I+2], ne_deepest_connection[j,i] )
         U[J+1,I+2] = numpy.maximum( U[J+1,I+2], ne_deepest_connection[j,i] )
 
         needed = nw_deepest_connection > numpy.maximum( n, w )
         j,i = numpy.nonzero( needed & ( n>=w ) ); J,I=2*j,2*i
+        if verbose: print("  NW corner N: ", j.size, " raised")
         V[J+2,I] = numpy.maximum( V[J+2,I], nw_deepest_connection[j,i] )
         V[J+2,I+1] = numpy.maximum( V[J+2,I+1], nw_deepest_connection[j,i] )
         j,i = numpy.nonzero( needed & ( n<=w ) ); J,I=2*j,2*i
+        if verbose: print("  NW corner W: ", j.size, " raised")
         U[J,I] = numpy.maximum( U[J,I], nw_deepest_connection[j,i] )
         U[J+1,I] = numpy.maximum( U[J+1,I], nw_deepest_connection[j,i] )
+
+    def lift_ave_max(self):
+        C, U, V = self.c_effective, self.u_effective, self.v_effective
+        C.ave, U.ave, V.ave = numpy.maximum(C.ave, C.low), numpy.maximum(U.ave, U.low), numpy.maximum(V.ave, V.low)
+        C.hgh, U.hgh, V.hgh = numpy.maximum(C.hgh, C.ave), numpy.maximum(U.hgh, U.ave), numpy.maximum(V.hgh, V.ave)
 
     def coarsen(self):
         M = ThinWalls(lon=self.lon[::2,::2],lat=self.lat[::2,::2])
