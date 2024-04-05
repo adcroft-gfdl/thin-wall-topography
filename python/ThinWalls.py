@@ -4,14 +4,57 @@ import numpy
 class StatsBase(object):
     """A base class for Stats
     Provides numpy-like itemized access with "view" (instead of copy) when possible.
+    low, ave and hgh properties are not allocated during instantiation.
     """
-    __slots__ = ('low', 'ave', 'hgh')
-    def __init__(self, mean=None, min=None, max=None):
-        self.low = min
-        self.ave = mean
-        self.hgh = max
+    __slots__ = ('shape', '_low', '_ave', '_hgh')
+    def __init__(self, shape=None, low=None, ave=None, hgh=None):
+        self.shape = shape
+        self._ave = None
+        self._low = None
+        self._hgh = None
+        if shape is None:
+            if (ave is not None and low is not None and ave.shape != low.shape) or \
+               (ave is not None and hgh is not None and ave.shape != hgh.shape) or \
+               (low is not None and hgh is not None and low.shape != hgh.shape):
+                raise ValueError("Shapes of ave, low, and hgh must be consistent.")
+            if low is not None:
+                self.shape = low.shape
+            elif ave is not None:
+                self.shape = ave.shape
+            elif hgh is not None:
+                self.shape = hgh.shape
+        if low is not None: self.low = low
+        if ave is not None: self.ave = ave
+        if hgh is not None: self.hgh = hgh
+    @property
+    def low(self):
+        if self._low is None:
+            self._low = numpy.zeros(self.shape)
+        return self._low
+    @low.setter
+    def low(self, value):
+        assert value.shape==self.shape, "Wrong shape for 'low'!"
+        self._low = value
+    @property
+    def ave(self):
+        if self._ave is None:
+            self._ave = numpy.zeros(self.shape)
+        return self._ave
+    @ave.setter
+    def ave(self, value):
+        assert value.shape==self.shape, "Wrong shape for 'ave'!"
+        self._ave = value
+    @property
+    def hgh(self):
+        if self._hgh is None:
+            self._hgh = numpy.zeros(self.shape)
+        return self._hgh
+    @hgh.setter
+    def hgh(self, value):
+        assert value.shape==self.shape, "Wrong shape for 'hgh'!"
+        self._hgh = value
     def __getitem__(self, key):
-        return StatsBase(mean=self.ave[key], min=self.low[key], max=self.hgh[key])
+        return StatsBase(low=self.low[key], ave=self.ave[key], hgh=self.hgh[key])
     def __setitem__(self, key, value):
         self.low[key] = value.low
         self.hgh[key] = value.hgh
@@ -25,20 +68,19 @@ class Stats(StatsBase):
     hgh   - maximum value
     ave   - mean value
     """
-    def __init__(self, shape, mean=None, min=None, max=None):
+    def __init__(self, shape, low=None, ave=None, hgh=None):
         assert len(shape)==2, "Shape size error. Stats object needs to be strictly two-dimensional."
-        self.shape = shape
-        StatsBase.__init__(self, mean=numpy.zeros(shape), min=numpy.zeros(shape), max=numpy.zeros(shape))
-        if (mean is not None) and (min is not None) and (max is not None):
-            self.set(min, max, mean)
+        StatsBase.__init__(self, shape=shape, low=low, ave=ave, hgh=hgh)
+        if (low is not None) and (ave is not None) and (hgh is not None):
+            self.set(low, hgh, ave)
         else:
-            if mean is not None: self.set_equal(mean)
-            if min is not None: self.set_equal(min)
-            if max is not None: self.set_equal(max)
+            if ave is not None: self.set_equal(ave)
+            if low is not None: self.set_equal(low)
+            if hgh is not None: self.set_equal(hgh)
     def __repr__(self):
         return '<Stats shape:(%i,%i)>'%(self.shape[0], self.shape[1])
     def __copy__(self):
-        return Stats(self.shape, mean=self.ave, min=self.low, max=self.hgh)
+        return Stats(self.shape, ave=self.ave, low=self.low, hgh=self.hgh)
     def copy(self):
         """Returns new instance with copied values"""
         return self.__copy__()
@@ -97,10 +139,10 @@ class Stats(StatsBase):
         self.hgh = numpy.flip(self.hgh, axis=axis)
     def transpose(self):
         """Transpose data swapping i-j indexes"""
+        self.shape = (self.shape[1], self.shape[0])
         self.low = self.low.T
         self.ave = self.ave.T
         self.hgh = self.hgh.T
-        self.shape = self.low.shape
 
 def od(dir):
     """Returns the name of the opposite direction"""
@@ -142,7 +184,7 @@ def max_Stats(e1, e2):
     low = numpy.maximum(e1.low, e2.low)
     ave = numpy.maximum(e1.ave, e2.ave)
     hgh = numpy.maximum(e1.hgh, e2.hgh)
-    return StatsBase(mean=ave, min=low, max=hgh)
+    return StatsBase(ave=ave, low=low, hgh=hgh)
 
 class ThinWalls(GMesh):
     """Container for thin wall topographic data and mesh.
@@ -385,9 +427,9 @@ class ThinWalls(GMesh):
         B1, B2 = self.sec(od(dir[0])), self.sec(od(dir[1])) # Opposing corner sections
         C = self.sec(dir) # Targer corner cell centers
 
-        inner = StatsBase(min=numpy.minimum(R1.low, R2.low),
-                          mean=0.5*(R1.ave+R2.ave),
-                          max=numpy.maximum(R1.hgh, R2.hgh))
+        inner = StatsBase(low=numpy.minimum(R1.low, R2.low),
+                          ave=0.5*(R1.ave+R2.ave),
+                          hgh=numpy.maximum(R1.hgh, R2.hgh))
         opp_ridge = numpy.maximum(B1.low, B2.low)
         idx = numpy.nonzero( inner.low>opp_ridge )
 
@@ -490,9 +532,9 @@ class ThinWalls(GMesh):
         Ea1, Ea2 = self.sec(secintercard(dir*2+nd1)), self.sec(secintercard(dir*2+nd2))
         Eb1, Eb2 = self.sec(secintercard(od(dir)*2+nd1)), self.sec(secintercard(od(dir)*2+nd2))
 
-        central = StatsBase(min=numpy.minimum(R1.low, R2.low),
-                            mean=0.5*(R1.ave+R2.ave),
-                            max=numpy.maximum(R1.hgh, R2.hgh))
+        central = StatsBase(low=numpy.minimum(R1.low, R2.low),
+                            ave=0.5*(R1.ave+R2.ave),
+                            hgh=numpy.maximum(R1.hgh, R2.hgh))
         oppos_low_min, oppos_low_max = numpy.minimum(Ba.low, Bb.low), numpy.maximum(Ba.low, Bb.low)
 
         ridges = ((central.low>oppos_low_min) & (central.low>=oppos_low_max))
@@ -590,9 +632,9 @@ class ThinWalls(GMesh):
 
         idx = numpy.nonzero( (crnr_ex < crnr_ex_op) & (crnr_ex < crnr_in) )
 
-        inner = StatsBase(min=numpy.minimum(crnr_in_nz, crnr_in_nm),
-                          mean=0.5*(crnr_in_nz+crnr_in_nm),
-                          max=numpy.maximum(crnr_in_nm, crnr_in_nm))
+        inner = StatsBase(low=numpy.minimum(crnr_in_nz, crnr_in_nm),
+                          ave=0.5*(crnr_in_nz+crnr_in_nm),
+                          hgh=numpy.maximum(crnr_in_nm, crnr_in_nm))
 
         if matlab:
             adjust_centers = False
