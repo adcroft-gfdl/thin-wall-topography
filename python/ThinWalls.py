@@ -276,22 +276,22 @@ class ThinWalls(GMesh):
         tmp[0,:] = self.c_simple.ave[0,:]
         tmp[-1,:] = self.c_simple.ave[-1,:]
         self.v_simple.set_equal( tmp )
-    def set_center_from_corner(self):
+    def set_center_from_corner(self, data):
         """Set elevation of cell centers from corners."""
-        self.c_simple.ave = 0.25 * ( (self.height[:-1,:-1] + self.height[1:,1:])
-                                    +(self.height[1:,:-1] + self.height[:-1,1:]) )
-        self.c_simple.hgh = numpy.maximum( numpy.maximum( self.height[:-1,:-1], self.height[1:,1:]),
-                                           numpy.maximum( self.height[1:,:-1], self.height[:-1,1:]) )
-        self.c_simple.low = numpy.minimum( numpy.minimum( self.height[:-1,:-1], self.height[1:,1:]),
-                                           numpy.minimum( self.height[1:,:-1], self.height[:-1,1:]) )
-    def set_edge_from_corner(self):
+        self.c_simple.ave = 0.25 * ( (data[:-1,:-1] + data[1:,1:])
+                                    +(data[1:,:-1] + data[:-1,1:]) )
+        self.c_simple.hgh = numpy.maximum( numpy.maximum( data[:-1,:-1], data[1:,1:]),
+                                           numpy.maximum( data[1:,:-1], data[:-1,1:]) )
+        self.c_simple.low = numpy.minimum( numpy.minimum( data[:-1,:-1], data[1:,1:]),
+                                           numpy.minimum( data[1:,:-1], data[:-1,1:]) )
+    def set_edge_from_corner(self, data):
         """Set elevation of cell edges from corners."""
-        self.u_simple.ave = 0.5 * ( self.height[:-1,:] + self.height[1:,:] )
-        self.u_simple.hgh = numpy.maximum( self.height[:-1,:], self.height[1:,:] )
-        self.u_simple.low = numpy.minimum( self.height[:-1,:], self.height[1:,:] )
-        self.v_simple.ave = 0.5 * ( self.height[:,:-1] + self.height[:,1:] )
-        self.v_simple.hgh = numpy.maximum( self.height[:,:-1], self.height[:,1:] )
-        self.v_simple.low = numpy.minimum( self.height[:,:-1], self.height[:,1:] )
+        self.u_simple.ave = 0.5 * ( data[:-1,:] + data[1:,:] )
+        self.u_simple.hgh = numpy.maximum( data[:-1,:], data[1:,:] )
+        self.u_simple.low = numpy.minimum( data[:-1,:], data[1:,:] )
+        self.v_simple.ave = 0.5 * ( data[:,:-1] + data[:,1:] )
+        self.v_simple.hgh = numpy.maximum( data[:,:-1], data[:,1:] )
+        self.v_simple.low = numpy.minimum( data[:,:-1], data[:,1:] )
     def sec(self, direction, measure='effective'):
         """
         Returns a StatsBase object that is a view of the heights at various locations.
@@ -1557,26 +1557,28 @@ class ThinWalls(GMesh):
         C.ave, U.ave, V.ave = numpy.maximum(C.ave, C.low), numpy.maximum(U.ave, U.low), numpy.maximum(V.ave, V.low)
         C.hgh, U.hgh, V.hgh = numpy.maximum(C.hgh, C.ave), numpy.maximum(U.hgh, U.ave), numpy.maximum(V.hgh, V.ave)
 
-    def coarsen(self):
+    def coarsen(self, do_thinwalls=True, do_effective=True):
         M = ThinWalls(lon=self.lon[::2,::2],lat=self.lat[::2,::2],rfl=self.rfl-1)
         M.c_simple.ave = self.c_simple.mean4()
         M.c_simple.low = self.c_simple.min4()
         M.c_simple.hgh = self.c_simple.max4()
-        M.u_simple.ave =self.u_simple.mean2u()
-        M.u_simple.low =self.u_simple.min2u()
-        M.u_simple.hgh =self.u_simple.max2u()
-        M.v_simple.ave = self.v_simple.mean2v()
-        M.v_simple.low = self.v_simple.min2v()
-        M.v_simple.hgh = self.v_simple.max2v()
-        M.c_effective.ave = self.c_effective.mean4()
-        M.c_effective.low = self.c_effective.min4()
-        M.c_effective.hgh = self.c_effective.max4()
-        M.u_effective.ave =self.u_effective.mean2u()
-        M.u_effective.low =self.u_effective.min2u()
-        M.u_effective.hgh =self.u_effective.max2u()
-        M.v_effective.ave = self.v_effective.mean2v()
-        M.v_effective.low = self.v_effective.min2v()
-        M.v_effective.hgh = self.v_effective.max2v()
+        if do_thinwalls:
+            M.u_simple.ave = self.u_simple.mean2u()
+            M.u_simple.low = self.u_simple.min2u()
+            M.u_simple.hgh = self.u_simple.max2u()
+            M.v_simple.ave = self.v_simple.mean2v()
+            M.v_simple.low = self.v_simple.min2v()
+            M.v_simple.hgh = self.v_simple.max2v()
+            if do_effective:
+                M.c_effective.ave = self.c_effective.mean4()
+                M.c_effective.low = self.c_effective.min4()
+                M.c_effective.hgh = self.c_effective.max4()
+                M.u_effective.ave = self.u_effective.mean2u()
+                M.u_effective.low = self.u_effective.min2u()
+                M.u_effective.hgh = self.u_effective.max2u()
+                M.v_effective.ave = self.v_effective.mean2v()
+                M.v_effective.low = self.v_effective.min2v()
+                M.v_effective.hgh = self.v_effective.max2v()
         return M
 
     def boundHbyUV(self):
