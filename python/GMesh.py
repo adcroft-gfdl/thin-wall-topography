@@ -200,33 +200,68 @@ class GMesh:
         lon = np.where( Y>=0, lon, -lon ) # Handle -180 .. 0
         return lon,lat
 
+    def __mean2j(A):
+        """Private method. Returns 2-point mean along j-direction."""
+        return 0.5 * ( A[:-1,:] + A[1:,:] )
+
+    def __mean2i(A):
+        """Private method. Returns 2-point mean along i-direction."""
+        return 0.5 * ( A[:,:-1] + A[:,1:] )
+
+    def __mean4(A):
+        """Private method. Returns 4-point mean (nodes to centers)."""
+        return 0.25 * ( ( A[:-1,:-1] + A[1:,1:] ) + ( A[1:,:-1] + A[:-1,1:] ) )
+
+    def __mean_from_xyz(X, Y, Z, direction):
+        """Private method. Calculates means of (X,Y,Z) and converts to (lon,lat)."""
+        # Refine mesh in 3d and project onto sphere
+        if direction == 'j':
+            X, Y, Z = GMesh.__mean2j(X), GMesh.__mean2j(Y), GMesh.__mean2j(Z)
+        elif direction == 'i':
+            X, Y, Z = GMesh.__mean2i(X), GMesh.__mean2i(Y), GMesh.__mean2i(Z)
+        elif direction == '4':
+            X, Y, Z = GMesh.__mean4(X), GMesh.__mean4(Y), GMesh.__mean4(Z)
+        else:
+            raise Exception('Wrong direction name')
+        R = 1. / np.sqrt((X*X + Y*Y) + Z*Z)
+        X,Y,Z = R*X, R*Y, R*Z
+
+        # Normalize X,Y to unit circle
+        #sub_roundoff = 2./np.finfo(X[0,0]).max
+        #R = 1. / ( np.sqrt(X*X + Y*Y) + sub_roundoff )
+        #X = R * X
+        #Y = R * Y
+
+        # Convert from 3d to spherical coordinates
+        return GMesh.__XYZ_to_lonlat(X, Y, Z)
+
     def interp_center_coords(self, work_in_3d=True):
         """Returns interpolated center coordinates from nodes"""
-
-        def mean4(A):
-            """Retruns a refined variable a with shape (2*nj+1,2*ni+1) by linearly interpolation A with shape (nj+1,ni+1)."""
-            return 0.25 * ( ( A[:-1,:-1] + A[1:,1:] ) + ( A[1:,:-1] + A[:-1,1:] ) ) # Mid-point of cell on original mesh
-
         if work_in_3d:
             # Calculate 3d coordinates of nodes (X,Y,Z), Z points along pole, Y=0 at lon=0,180, X=0 at lon=+-90
             X,Y,Z = GMesh.__lonlat_to_XYZ(self.lon, self.lat)
-
-            # Refine mesh in 3d and project onto sphere
-            X,Y,Z = mean4(X), mean4(Y), mean4(Z)
-            R = 1. / np.sqrt((X*X + Y*Y) + Z*Z)
-            X,Y,Z = R*X, R*Y, R*Z
-
-            # Normalize X,Y to unit circle
-            #sub_roundoff = 2./np.finfo(X[0,0]).max
-            #R = 1. / ( np.sqrt(X*X + Y*Y) + sub_roundoff )
-            #X = R * X
-            #Y = R * Y
-
-            # Convert from 3d to spherical coordinates
-            lon,lat = GMesh.__XYZ_to_lonlat(X, Y, Z)
+            lon, lat = GMesh.__mean_from_xyz(X, Y, Z, '4')
         else:
-            lon,lat = mean4(self.lon), mean4(self.lat)
+            lon, lat = GMesh.__mean4(self.lon), GMesh.__mean4(self.lat)
         return lon, lat
+
+    def refineby2(self, work_in_3d=True):
+        """Returns new Mesh instance with twice the resolution"""
+        lon, lat = np.zeros( (2*self.nj+1, 2*self.ni+1) ), np.zeros( (2*self.nj+1, 2*self.ni+1) )
+        lon[::2,::2], lat[::2,::2] = self.lon, self.lat # Shared nodes
+        if work_in_3d:
+            # Calculate 3d coordinates of nodes (X,Y,Z), Z points along pole, Y=0 at lon=0,180, X=0 at lon=+-90
+            X,Y,Z = GMesh.__lonlat_to_XYZ(self.lon, self.lat)
+            # lon[::2,::2], lat[::2,::2] = np.mod(self.lon+180.0, 360.0)-180.0, self.lat # only if we REALLY want the coords to be self-consistent
+            lon[1::2,::2], lat[1::2,::2] = GMesh.__mean_from_xyz(X, Y, Z, 'j') # Mid-point along j-direction
+            lon[::2,1::2], lat[::2,1::2] = GMesh.__mean_from_xyz(X, Y, Z, 'i') # Mid-point along i-direction
+            lon[1::2,1::2], lat[1::2,1::2] = GMesh.__mean_from_xyz(X, Y, Z, '4') # Mid-point of cell
+        else:
+            lon[1::2,::2], lat[1::2,::2] = GMesh.__mean2j(self.lon), GMesh.__mean2j(self.lat) # Mid-point along j-direction
+            lon[::2,1::2], lat[::2,1::2] = GMesh.__mean2i(self.lon), GMesh.__mean2i(self.lat) # Mid-point along i-direction
+            lon[1::2,1::2], lat[1::2,1::2] = GMesh.__mean4(self.lon), GMesh.__mean4(self.lat) # Mid-point of cell
+
+        return GMesh(lon=lon, lat=lat, rfl=self.rfl+1)
 
     def coarsest_resolution(self, mask_idx=[]):
         """Returns the coarsest resolution at each grid"""
@@ -252,42 +287,6 @@ class GMesh:
 
         return np.maximum( np.ceil( np.log2( dlat/dlat_src ) ),
                            np.ceil( np.log2( dlon/dlon_src ) ) )
-
-    def refineby2(self, work_in_3d=True):
-        """Returns new Mesh instance with twice the resolution"""
-
-        def local_refine(A):
-            """Retruns a refined variable a with shape (2*nj+1,2*ni+1) by linearly interpolation A with shape (nj+1,ni+1)."""
-            nj,ni = A.shape
-            a = np.zeros( (2*nj-1,2*ni-1) )
-            a[::2,::2] = A[:,:] # Shared nodes
-            a[::2,1::2] = 0.5 * ( A[:,:-1] + A[:,1:] ) # Mid-point along i-direction on original mesh
-            a[1::2,::2] = 0.5 * ( A[:-1,:] + A[1:,:] ) # Mid-point along j-direction on original mesh
-            a[1::2,1::2] = 0.25 * ( ( A[:-1,:-1] + A[1:,1:] ) + ( A[1:,:-1] + A[:-1,1:] ) ) # Mid-point of cell on original mesh
-            return a
-
-        if work_in_3d:
-            # Calculate 3d coordinates of nodes (X,Y,Z), Z points along pole, Y=0 at lon=0,180, X=0 at lon=+-90
-            X,Y,Z = GMesh.__lonlat_to_XYZ(self.lon, self.lat)
-
-            # Refine mesh in 3d and project onto sphere
-            X,Y,Z = local_refine(X), local_refine(Y), local_refine(Z)
-            R = 1. / np.sqrt((X*X + Y*Y) + Z*Z)
-            X,Y,Z = R*X, R*Y, R*Z
-
-            # Normalize X,Y to unit circle
-            #sub_roundoff = 2./np.finfo(X[0,0]).max
-            #R = 1. / ( np.sqrt(X*X + Y*Y) + sub_roundoff )
-            #X = R * X
-            #Y = R * Y
-
-            # Convert from 3d to spherical coordinates
-            lon,lat = GMesh.__XYZ_to_lonlat(X, Y, Z)
-
-        else:
-            lon,lat = local_refine(self.lon), local_refine(self.lat)
-
-        return GMesh(lon=lon, lat=lat, rfl=self.rfl+1)
 
     def rotate(self, y_rot=0, z_rot=0):
         """Sequentially apply a rotation about the Y-axis and then the Z-axis."""
