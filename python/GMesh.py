@@ -146,12 +146,11 @@ class GMesh:
         else:
             self.area = None
 
-        self.rfl = rfl #refining level
+        # Check and save North Pole point indices
+        jj, ii = np.nonzero(self.lat==90)
+        self.np_index = list(zip(jj, ii))
 
-    # def read_center_coords(self, lont, latt):
-    #     if lont.shape != (self.nj,self.ni): raise Exception('Cell center lon has the wrong size')
-    #     if latt.shape != (self.nj,self.ni): raise Exception('Cell center lat has the wrong size')
-    #     self.lont, self.latt = lont, latt
+        self.rfl = rfl #refining level
 
     def __copy__(self):
         return GMesh(shape = self.shape, lon=self.lon, lat=self.lat, area=self.area)
@@ -235,6 +234,124 @@ class GMesh:
         # Convert from 3d to spherical coordinates
         return GMesh.__XYZ_to_lonlat(X, Y, Z)
 
+    def __lonmean2(lon1, lon2, period=360.0):
+        """Private method. Returns 2-point mean for longitude with the consideration of periodicity. """
+        mean_lon = 0.5 * (lon1 + lon2)
+        half_period = 0.5 * period
+        # The special scenario that lon1 and lon2 are exactly 180-degree apart is unlikely to encounter here and
+        # therefore ignored. In that scenario, 2D average is more complicated and requires latitude information.
+        # return np.where( np.mod( np.abs(lon1-lon2), period ) > half_period,
+        #                 np.mod(mean_lon + half_period - lon1, period) + lon1, mean_lon )
+        # return mean_lon - np.sign(mean_lon) * (((mean_lon//half_period)%2)!=0) * half_period
+        return lon1 + np.mod(lon2-lon1, period) * 0.5 - (np.mod(lon2-lon1, period)>half_period) * half_period
+
+    def __mean2j_lon(A, periodicity=True, singularities=[]):
+        """Private method. Returns 2-point mean along j-direction for longitude.
+        Singularities (if exists) appropriate their neighbor values.
+        """
+        if periodicity:
+            mean_lon = GMesh.__lonmean2( A[:-1,:], A[1:,:] )
+        else:
+            mean_lon = GMesh.__mean2j(A)
+        for jj, ii in singularities:
+            if jj<A.shape[0]-1:
+                mean_lon[jj, ii] = A[jj+1, ii]
+            if jj>=1:
+                mean_lon[jj-1, ii] = A[jj-1, ii]
+        return mean_lon
+
+    def __mean2i_lon(A, periodicity=True, singularities=[]):
+        """Private method. Returns 2-point mean along i-direction for longitude.
+        Singularities (if exists) appropriate their neighbor values.
+        """
+        if periodicity:
+            mean_lon = GMesh.__lonmean2( A[:,:-1], A[:,1:] )
+        else:
+            mean_lon = GMesh.__mean2i(A)
+        for jj, ii in singularities:
+            if ii<A.shape[1]:
+                mean_lon[jj, ii] = A[jj, ii+1]
+            if ii>=1:
+                mean_lon[jj, ii-1] = A[jj, ii-1]
+        return mean_lon
+
+    def __mean4_lon(A, periodicity=True, singularities=[]):
+        """Private method. Returns 4-point mean (nodes to centers) for longitude.
+        Singularities (if exists) appropriate their neighbor values.
+        """
+        if periodicity:
+            mean_lon = GMesh.__lonmean2(GMesh.__lonmean2(A[:-1,:-1], A[1:,1:]),
+                                        GMesh.__lonmean2(A[1:,:-1], A[:-1,1:]))
+            for jj, ii in singularities:
+                if jj<A.shape[0]-1 and ii<A.shape[1]-1:
+                    mean_lon[jj, ii] = GMesh.__lonmean2(A[jj+1, ii+1], GMesh.__lonmean2(A[jj, ii+1], A[jj+1, ii]))
+                if jj>=1 and ii>=1:
+                    mean_lon[jj-1, ii-1] = GMesh.__lonmean2(A[jj-1, ii-1], GMesh.__lonmean2(A[jj, ii-1], A[jj-1, ii]))
+                    mean_lon[jj, ii-1] = GMesh.__lonmean2(A[jj+1, ii-1], GMesh.__lonmean2(A[jj, ii-1], A[jj+1, ii]))
+                if jj>=1 and ii<A.shape[1]-1:
+                    mean_lon[jj-1, ii] = GMesh.__lonmean2(A[jj-1, ii+1], GMesh.__lonmean2(A[jj, ii+1], A[jj-1, ii]))
+        else:
+            mean_lon = GMesh.__mean4(A)
+            for jj, ii in singularities:
+                if jj<A.shape[0]-1 and ii<A.shape[1]-1:
+                    mean_lon[jj, ii] = 0.5 * A[jj+1, ii+1] + 0.25 * (A[jj, ii+1] + A[jj+1, ii])
+                if jj>=1 and ii>=1:
+                    mean_lon[jj-1, ii-1] = 0.5 * A[jj-1, ii-1] + 0.25 * (A[jj, ii-1] + A[jj-1, ii])
+                if jj<A.shape[0]-1 and ii>=1:
+                    mean_lon[jj, ii-1] = 0.5 * A[jj+1, ii-1] + 0.25 * (A[jj, ii-1] + A[jj+1, ii])
+                if jj>=1 and ii<A.shape[1]-1:
+                    mean_lon[jj-1, ii] = 0.5 * A[jj-1, ii+1] + 0.25 * (A[jj, ii+1] + A[jj-1, ii])
+        return mean_lon
+
+    # #     This does not apply to the special scenario that lon1 and lon2 are exactly 180-degree apart,
+    # # which is unlikely to encounter here. In that scenario, 2D average is slightly more complicated and
+    # # requires latitude information.
+    # # Mean longitude is referenced to the first argument
+    # # recall that np.mod(-3,10)=7, np.fmod(-3,10)=-3
+    # def __mean2j_lon(A, singularities=[]):
+    #     """Private method. Returns 2-point mean along j-direction for longitude.
+    #     Singularities (if exists) appropriate their neighbor values.
+    #     """
+    #     mean_lon = np.fmod( (A[1:,:] - A[:-1,:]), 360.0 ) * 0.5 + A[:-1,:]
+    #     for jj, ii in singularities:
+    #         if jj<A.shape[0]-1:
+    #             mean_lon[jj, ii] = A[jj+1, ii]
+    #         if jj>=1:
+    #             mean_lon[jj-1, ii] = A[jj-1, ii]
+    #     return mean_lon
+
+    # def __mean2i_lon(A, singularities=[]):
+    #     """Private method. Returns 2-point mean along i-direction for longitude.
+    #     Singularities (if exists) appropriate their neighbor values.
+    #     """
+    #     mean_lon = np.fmod( (A[:,1:] - A[:,:-1]), 360.0 ) * 0.5 + A[:,:-1]
+    #     for jj, ii in singularities:
+    #         if ii<A.shape[1]:
+    #             mean_lon[jj, ii] = A[jj, ii+1]
+    #         if ii>=1:
+    #             mean_lon[jj, ii-1] = A[jj, ii-1]
+    #     return mean_lon
+
+    # def __mean4_lon(A, singularities=[]):
+    #     """Private method. Returns 4-point mean (nodes to centers) for longitude.
+    #     Singularities (if exists) appropriate their neighbor values.
+    #     """
+    #     mean_lon = np.fmod( ((A[1:,1:] - 3.0*A[:-1,:-1]) + (A[1:,:-1] + A[:-1,1:])) * 0.5, 360.0 ) * 0.5 + A[:-1,:-1]
+    #     for jj, ii in singularities:
+    #         if jj<A.shape[0]-1 and ii<A.shape[1]-1:
+    #             mean_lon[jj, ii] = np.fmod( -A[jj+1, ii+1] + (A[jj, ii+1] + A[jj+1, ii]) * 0.5, 360.0 ) * 0.5 + A[jj+1, ii+1]
+    #             # mean_lon[jj, ii] = 0.5 * A[jj+1, ii+1] + 0.25 * (A[jj, ii+1] + A[jj+1, ii])
+    #         if jj>=1 and ii>=1:
+    #             mean_lon[jj-1, ii-1] = np.fmod( -A[jj-1, ii-1] + (A[jj, ii-1] + A[jj-1, ii]) * 0.5, 360.0 ) * 0.5 + A[jj-1, ii-1]
+    #             # mean_lon[jj-1, ii-1] = 0.5 * A[jj-1, ii-1] + 0.25 * (A[jj, ii-1] + A[jj-1, ii])
+    #         if jj<A.shape[0]-1 and ii>=1:
+    #             mean_lon[jj, ii-1] = np.fmod( -A[jj+1, ii-1] + (A[jj, ii-1] + A[jj+1, ii]) * 0.5, 360.0 ) * 0.5 + A[jj+1, ii-1]
+    #             # mean_lon[jj, ii-1] = 0.5 * A[jj+1, ii-1] + 0.25 * (A[jj, ii-1] + A[jj+1, ii])
+    #         if jj>=1 and ii<A.shape[1]-1:
+    #             mean_lon[jj-1, ii] = np.fmod( -A[jj-1, ii+1] + (A[jj, ii+1] + A[jj-1, ii]) * 0.5, 360.0 ) * 0.5 + A[jj-1, ii+1]
+    #             # mean_lon[jj-1, ii] = 0.5 * A[jj-1, ii+1] + 0.25 * (A[jj, ii+1] + A[jj-1, ii])
+    #     return mean_lon
+
     def interp_center_coords(self, work_in_3d=True):
         """Returns interpolated center coordinates from nodes"""
         if work_in_3d:
@@ -242,7 +359,7 @@ class GMesh:
             X,Y,Z = GMesh.__lonlat_to_XYZ(self.lon, self.lat)
             lon, lat = GMesh.__mean_from_xyz(X, Y, Z, '4')
         else:
-            lon, lat = GMesh.__mean4(self.lon), GMesh.__mean4(self.lat)
+            lon, lat = GMesh.__mean4_lon(self.lon, singularities=self.np_index), GMesh.__mean4(self.lat)
         return lon, lat
 
     def refineby2(self, work_in_3d=True):
@@ -257,10 +374,12 @@ class GMesh:
             lon[::2,1::2], lat[::2,1::2] = GMesh.__mean_from_xyz(X, Y, Z, 'i') # Mid-point along i-direction
             lon[1::2,1::2], lat[1::2,1::2] = GMesh.__mean_from_xyz(X, Y, Z, '4') # Mid-point of cell
         else:
-            lon[1::2,::2], lat[1::2,::2] = GMesh.__mean2j(self.lon), GMesh.__mean2j(self.lat) # Mid-point along j-direction
-            lon[::2,1::2], lat[::2,1::2] = GMesh.__mean2i(self.lon), GMesh.__mean2i(self.lat) # Mid-point along i-direction
-            lon[1::2,1::2], lat[1::2,1::2] = GMesh.__mean4(self.lon), GMesh.__mean4(self.lat) # Mid-point of cell
-
+            lon[1::2,::2] = GMesh.__mean2j_lon(self.lon, singularities=self.np_index)
+            lon[::2,1::2] = GMesh.__mean2i_lon(self.lon, singularities=self.np_index)
+            lon[1::2,1::2] = GMesh.__mean4_lon(self.lon, singularities=self.np_index)
+            lat[1::2,::2] = GMesh.__mean2j(self.lat)
+            lat[::2,1::2] = GMesh.__mean2i(self.lat)
+            lat[1::2,1::2] = GMesh.__mean4(self.lat)
         return GMesh(lon=lon, lat=lat, rfl=self.rfl+1)
 
     def coarsest_resolution(self, mask_idx=[]):
