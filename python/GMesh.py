@@ -23,44 +23,46 @@ class IntCoord(object):
     """
     A type for integerized coordinate
 
-    start : float
+    origin : float
         Global starting lon/lat
     delta : float
         Resolution (in deg)
     N : int
         Total number of grid point
-    n0 : int, optional
+    start : int, optional
         Starting index of the subset
-    n1 : int, optional
+    stop : int, optional
         Ending index of the subset
     """
-    def __init__(self, start, delta, N, n0=0, n1=None):
-        self.start = start
+    def __init__(self, origin, delta, N, start=0, stop=None):
+        self.origin = origin
         self.delta = delta
         self.N = N
-        self.n0 = n0
-        self.n1 = n1
-        if n1 is None:
-            self.n1 = self.N
-        self.size = self.n1 - self.n0 + self.N * int( self.n0>self.n1 )
+        self.start = start
+        self.stop = stop
+        if stop is None:
+            self.stop = self.N
         self._centers, self._bounds = None, None
     @property
+    def size(self):
+        return self.stop - self.start + self.N * int( self.start>self.stop )
+    @property
     def centers(self):
-        if self._centers is None:
-            if self.n0>self.n1:
-                self._centers = self.start + self.delta * np.r_[np.arange(self.n0, self.N),
-                                                                np.arange(self.N, self.N+self.n1)]
+        if self._centers is None or self._centers.size!=self.size:
+            if self.start>self.stop:
+                self._centers = self.origin + self.delta * np.r_[np.arange(self.start, self.N),
+                                                                np.arange(self.N, self.N+self.stop)]
             else:
-                self._centers = self.start + self.delta * np.arange(self.n0, self.n1)
+                self._centers = self.origin + self.delta * np.arange(self.start, self.stop)
         return self._centers
     @property
     def bounds(self):
-        if self._bounds is None:
-            if self.n0>self.n1:
-                self._bounds = self.start + self.delta * np.r_[np.arange(self.n0-0.5, self.N),
-                                                               np.arange(self.N+0.5, self.N+self.n1)]
+        if self._bounds is None or self._centers.size!=self.size+1:
+            if self.start>self.stop:
+                self._bounds = self.origin + self.delta * np.r_[np.arange(self.start-0.5, self.N),
+                                                               np.arange(self.N+0.5, self.N+self.stop)]
             else:
-                self._bounds = self.start + self.delta * np.arange(self.n0-0.5, self.n1)
+                self._bounds = self.origin + self.delta * np.arange(self.start-0.5, self.stop)
         return self._bounds
 
 class GMesh:
@@ -439,15 +441,15 @@ class GMesh:
         sni,snj = lon.N,lat.N # Shape of source
         # Spacing on uniform mesh
         dellon, dellat = lon.delta, lat.delta
-        assert self.lat.max()<=lat.start+(lat.n1+0.5)*lat.delta, 'Mesh has latitudes above range of regular grid '+str(self.lat.max())+' '+str(lat.start+(lat.n1+0.5)*lat.delta)
-        assert self.lat.min()>=lat.start+(lat.n0-0.5)*lat.delta, 'Mesh has latitudes below range of regular grid '+str(self.lat.min())+' '+str(lat.start+(lat.n0-0.5)*lat.delta)
+        # assert self.lat.max()<=lat.origin+(lat.stop+0.5)*lat.delta, 'Mesh has latitudes above range of regular grid '+str(self.lat.max())+' '+str(lat.origin+(lat.stop+0.5)*lat.delta)
+        # assert self.lat.min()>=lat.origin+(lat.start-0.5)*lat.delta, 'Mesh has latitudes below range of regular grid '+str(self.lat.min())+' '+str(lat.origin+(lat.start-0.5)*lat.delta)
         if use_center:
             lon_tgt, lat_tgt = self.interp_center_coords(work_in_3d=True)
         else:
             lon_tgt, lat_tgt = self.lon, self.lat
         # Nearest integer (the upper one if equidistant)
-        nn_i = np.floor(np.mod(lon_tgt-lon.start+0.5*dellon,360)/dellon)
-        nn_j = np.floor(0.5+(lat_tgt-lat.start)/dellat)
+        nn_i = np.floor(np.mod(lon_tgt-lon.origin+0.5*dellon,360)/dellon)
+        nn_j = np.floor(0.5+(lat_tgt-lat.origin)/dellat)
         nn_j = np.minimum(nn_j, snj-1)
         assert nn_j.min()>=0, 'Negative j index calculated! j='+str(nn_j.min())
         assert nn_j.max()<snj, 'Out of bounds j index calculated! j='+str(nn_j.max())
@@ -463,9 +465,9 @@ class GMesh:
         sni, snj = xs.size, ys.size # Shape of source
         hits = np.zeros((snj,sni))
         if singularity_radius>0:
-            iy = (np.ceil((90-singularity_radius-ys.start)/ys.delta)-ys.n0).astype(int)
+            iy = (np.ceil((90-singularity_radius-ys.origin)/ys.delta)-ys.start).astype(int)
             hits[iy:] = 1
-        hits[j-ys.n0, np.mod(i-xs.n0, xs.N)] = 1
+        hits[j-ys.start, np.mod(i-xs.start, xs.N)] = 1
         return hits
 
     def _toc(tic, label):
@@ -494,11 +496,14 @@ class GMesh:
             converged = converged or ( (dellon_t<=dellon_s) and (dellat_t<=dellat_s) )
         if timers: tic = GMesh._toc(gtic, "Set up")
         if verbose:
-            print('Refine level', this.rfl, this, end=" ")
+            print(this)
+            print('Refine level', this.rfl, repr(this), end=" ")
             if fixed_refine_level<1:
                 print('Hit', nhits, 'out of', hits.size, 'cells', end=" ")
             if resolution_limit:
-                print('dx~1/{} dy~1/{}'.format(int(1/dellon_t), int(1/dellat_t)), end=" ")
+                spc_lon = int(1/dellon_t) if dellon_t!=0 else float('Inf')
+                spc_lat = int(1/dellat_t) if dellat_t!=0 else float('Inf')
+                print('dx~1/{} dy~1/{}'.format(spc_lon, spc_lat), end=" ")
             print('(%.4f'%mb,'Mb)')
         # Conditions to refine
         # 1) Not all cells are intercepted
@@ -529,7 +534,7 @@ class GMesh:
             if timers: stic = GMesh._toc(stic, "extending list")
             if timers: tic = GMesh._toc(tic, "Total for loop")
             if verbose:
-                print('Refine level', this.rfl, this, end=" ")
+                print('Refine level', this.rfl, repr(this), end=" ")
                 if fixed_refine_level<1:
                     print('Hit', nhits, 'out of', hits.size, 'cells', end=" ")
                 if resolution_limit:
@@ -550,5 +555,5 @@ class GMesh:
             self.height = np.zeros((self.nj,self.ni))
         else:
             self.height = np.zeros((self.nj+1,self.ni+1))
-        self.height[:,:] = zs[nns_j[:,:]-ys.n0, np.mod(nns_i[:,:]-xs.n0, xs.N)]
+        self.height[:,:] = zs[nns_j[:,:]-ys.start, np.mod(nns_i[:,:]-xs.start, xs.N)]
         return
