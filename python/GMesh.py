@@ -34,24 +34,24 @@ class IntCoord(object):
     stop : int, optional
         Ending index of the subset
     """
-    def __init__(self, origin, delta, N, start=0, stop=None):
+    def __init__(self, origin, delta, n, start=0, stop=None):
         self.origin = origin
         self.delta = delta
-        self.N = N
+        self.n = n
         self.start = start
         self.stop = stop
         if stop is None:
-            self.stop = self.N
+            self.stop = self.n
         self._centers, self._bounds = None, None
     @property
     def size(self):
-        return self.stop - self.start + self.N * int( self.start>self.stop )
+        return self.stop - self.start + self.n * int( self.start>self.stop )
     @property
     def centers(self):
         if self._centers is None or self._centers.size!=self.size:
             if self.start>self.stop:
-                self._centers = self.origin + self.delta * np.r_[np.arange(self.start, self.N),
-                                                                np.arange(self.N, self.N+self.stop)]
+                self._centers = self.origin + self.delta * np.r_[np.arange(self.start, self.n),
+                                                                np.arange(self.n, self.n+self.stop)]
             else:
                 self._centers = self.origin + self.delta * np.arange(self.start, self.stop)
         return self._centers
@@ -59,8 +59,8 @@ class IntCoord(object):
     def bounds(self):
         if self._bounds is None or self._centers.size!=self.size+1:
             if self.start>self.stop:
-                self._bounds = self.origin + self.delta * np.r_[np.arange(self.start-0.5, self.N),
-                                                               np.arange(self.N+0.5, self.N+self.stop)]
+                self._bounds = self.origin + self.delta * np.r_[np.arange(self.start-0.5, self.n),
+                                                               np.arange(self.n+0.5, self.n+self.stop)]
             else:
                 self._bounds = self.origin + self.delta * np.arange(self.start-0.5, self.stop)
         return self._bounds
@@ -438,7 +438,7 @@ class GMesh:
 
     def find_nn_uniform_source(self, lon, lat, use_center=False):
         """Returns the i,j arrays for the indexes of the nearest neighbor point to grid (lon,lat)"""
-        sni,snj = lon.N,lat.N # Shape of source
+        sni,snj = lon.n,lat.n # Shape of source
         # Spacing on uniform mesh
         dellon, dellat = lon.delta, lat.delta
         # assert self.lat.max()<=lat.origin+(lat.stop+0.5)*lat.delta, 'Mesh has latitudes above range of regular grid '+str(self.lat.max())+' '+str(lat.origin+(lat.stop+0.5)*lat.delta)
@@ -467,7 +467,7 @@ class GMesh:
         if singularity_radius>0:
             iy = (np.ceil((90-singularity_radius-ys.origin)/ys.delta)-ys.start).astype(int)
             hits[iy:] = 1
-        hits[j-ys.start, np.mod(i-xs.start, xs.N)] = 1
+        hits[j-ys.start, np.mod(i-xs.start, xs.n)] = 1
         return hits
 
     def _toc(tic, label):
@@ -555,5 +555,88 @@ class GMesh:
             self.height = np.zeros((self.nj,self.ni))
         else:
             self.height = np.zeros((self.nj+1,self.ni+1))
-        self.height[:,:] = zs[nns_j[:,:]-ys.start, np.mod(nns_i[:,:]-xs.start, xs.N)]
+        self.height[:,:] = zs[nns_j[:,:]-ys.start, np.mod(nns_i[:,:]-xs.start, xs.n)]
         return
+
+class RegularCoord:
+    """Container for uniformly spaced global cell center coordinate parameters
+
+    For use with uniformly gridded data that has cell center global coordinates"""
+    def __init__( self, n, origin, periodic, delta=None, degppi=180 ):
+        """Create a RegularCoord
+        n         is number of cells;
+        origin    is the coordinate on the left edge (not first);
+        periodic  distinguishes between longitude and latitude
+        """
+        self.n = n # Global parameter
+        self.periodic = periodic # Global parameter
+        if delta is not None:
+            self.delta, self.rdelta = delta, 1.0/delta
+        else:
+            if periodic: self.delta, self.rdelta = ( 2 * degppi ) / n, n / ( 2 * degppi )  # Global parameter
+            else: self.delta, self.rdelta = degppi / n, n / degppi # Global parameter
+        self.origin = origin # Global parameter
+        self.offset = np.floor( self.rdelta * self.origin ).astype(int) # Global parameter
+        self.rem = np.mod( self.rdelta * self.origin, 1 ) # Global parameter ( needed for odd n)
+        self.start = 0 # Special for each subset
+        self.stop = self.n # Special for each subset
+        self._centers, self._bounds = None, None
+    def __repr__( self ):
+        return '<RegularCoord n={}, dx={}, rdx={}, x0={}, io={}, rem={}, is-ie={}-{}, periodic={}>'.format( \
+            self.n, self.delta, self.rdelta, self.origin, self.offset, self.rem, self.start, self.stop, self.periodic)
+    @property
+    def size(self):
+        """Return the size of the coordinate"""
+        return self.stop - self.start + self.n * int( self.start>self.stop )
+    @property
+    def centers(self):
+        """Return center coordinates (N = size)"""
+        if self._centers is None or self._centers.size!=self.size:
+            if self.start>self.stop:
+                self._centers = self.origin + self.delta * np.r_[np.arange(self.start, self.n),
+                                                                 np.arange(self.n, self.n+self.stop)]
+            else:
+                self._centers = self.origin + self.delta * np.arange(self.start, self.stop)
+        return self._centers
+    @property
+    def bounds(self):
+        """Return boundary coordinates (N = size+1)"""
+        if self._bounds is None or self._bounds.size!=self.size+1:
+            if self.start>self.stop:
+                self._bounds = self.origin + self.delta * np.r_[np.arange(self.start-0.5, self.n),
+                                                                np.arange(self.n+0.5, self.n+self.stop)]
+            else:
+                self._bounds = self.origin + self.delta * np.arange(self.start-0.5, self.stop)
+        return self._bounds
+    def subset( self, start=None, stop=None ):
+        """Subset a RegularCoord with slice "slc" """
+        Is, Ie = 0, self.n
+        if start is not None: Is = start
+        if stop is not None: Ie = stop
+        S = RegularCoord( self.n, self.origin, self.periodic, delta=self.delta ) # This creates a copy of "self"
+        S.start, S.stop = Is, Ie
+        return S
+    def indices( self, x, bound_subset=False ):
+        """Return indices of cells that contain x
+
+        If RegularCoord is non-periodic (i.e. latitude), out of range values of "x" will be clipped to -90..90 .
+        If regularCoord is periodic, any value of x will be globally wrapped.
+        If RegularCoord is a subset, then "x" will be clipped to the bounds of the subset (after periodic wrapping).
+        if "bound_subset" is True, then limit indices to the range of the subset
+        """
+        ind = np.floor( self.rdelta * np.array(x) - self.rem ).astype(int) - self.offset
+        # Apply global bounds
+        if self.periodic:
+            ind = np.mod( ind, self.n )
+        else:
+            ind = np.maximum( 0, np.minimum( self.n - 1, ind ) )
+        # Now adjust for subset
+        if bound_subset:
+            ind = np.maximum( self.start, np.minimum( self.stop - 1, ind ) ) - self.start
+            assert ind.min() >= 0, "out of range"
+            assert ind.max() < self.stop - self.start, "out of range"
+        else:
+            ind = ind - self.start
+            assert ind.min() >= 0, "out of range"
+            assert ind.max() < self.stop - self.start, "out of range"
+        return ind
