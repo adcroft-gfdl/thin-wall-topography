@@ -19,52 +19,6 @@ def is_mesh_uniform(lon,lat):
         raise Exception("Arguments must be either both be 1D or both be 2D arralat")
     return compare(lat) and compare(lon.T)
 
-class IntCoord(object):
-    """
-    A type for integerized coordinate
-
-    origin : float
-        Global starting lon/lat
-    delta : float
-        Resolution (in deg)
-    N : int
-        Total number of grid point
-    start : int, optional
-        Starting index of the subset
-    stop : int, optional
-        Ending index of the subset
-    """
-    def __init__(self, origin, delta, n, start=0, stop=None):
-        self.origin = origin
-        self.delta = delta
-        self.n = n
-        self.start = start
-        self.stop = stop
-        if stop is None:
-            self.stop = self.n
-        self._centers, self._bounds = None, None
-    @property
-    def size(self):
-        return self.stop - self.start + self.n * int( self.start>self.stop )
-    @property
-    def centers(self):
-        if self._centers is None or self._centers.size!=self.size:
-            if self.start>self.stop:
-                self._centers = self.origin + self.delta * np.r_[np.arange(self.start, self.n),
-                                                                np.arange(self.n, self.n+self.stop)]
-            else:
-                self._centers = self.origin + self.delta * np.arange(self.start, self.stop)
-        return self._centers
-    @property
-    def bounds(self):
-        if self._bounds is None or self._bounds.size!=self.size+1:
-            if self.start>self.stop:
-                self._bounds = self.origin + self.delta * np.r_[np.arange(self.start-0.5, self.n),
-                                                               np.arange(self.n+0.5, self.n+self.stop)]
-            else:
-                self._bounds = self.origin + self.delta * np.arange(self.start-0.5, self.stop)
-        return self._bounds
-
 class GMesh:
     """Describes 2D meshes for ESMs.
 
@@ -300,55 +254,6 @@ class GMesh:
                 if jj>=1 and ii<A.shape[1]-1:
                     mean_lon[jj-1, ii] = 0.5 * A[jj-1, ii+1] + 0.25 * (A[jj, ii+1] + A[jj-1, ii])
         return mean_lon
-
-    # #     This does not apply to the special scenario that lon1 and lon2 are exactly 180-degree apart,
-    # # which is unlikely to encounter here. In that scenario, 2D average is slightly more complicated and
-    # # requires latitude information.
-    # # Mean longitude is referenced to the first argument
-    # # recall that np.mod(-3,10)=7, np.fmod(-3,10)=-3
-    # def __mean2j_lon(A, singularities=[]):
-    #     """Private method. Returns 2-point mean along j-direction for longitude.
-    #     Singularities (if exists) appropriate their neighbor values.
-    #     """
-    #     mean_lon = np.fmod( (A[1:,:] - A[:-1,:]), 360.0 ) * 0.5 + A[:-1,:]
-    #     for jj, ii in singularities:
-    #         if jj<A.shape[0]-1:
-    #             mean_lon[jj, ii] = A[jj+1, ii]
-    #         if jj>=1:
-    #             mean_lon[jj-1, ii] = A[jj-1, ii]
-    #     return mean_lon
-
-    # def __mean2i_lon(A, singularities=[]):
-    #     """Private method. Returns 2-point mean along i-direction for longitude.
-    #     Singularities (if exists) appropriate their neighbor values.
-    #     """
-    #     mean_lon = np.fmod( (A[:,1:] - A[:,:-1]), 360.0 ) * 0.5 + A[:,:-1]
-    #     for jj, ii in singularities:
-    #         if ii<A.shape[1]:
-    #             mean_lon[jj, ii] = A[jj, ii+1]
-    #         if ii>=1:
-    #             mean_lon[jj, ii-1] = A[jj, ii-1]
-    #     return mean_lon
-
-    # def __mean4_lon(A, singularities=[]):
-    #     """Private method. Returns 4-point mean (nodes to centers) for longitude.
-    #     Singularities (if exists) appropriate their neighbor values.
-    #     """
-    #     mean_lon = np.fmod( ((A[1:,1:] - 3.0*A[:-1,:-1]) + (A[1:,:-1] + A[:-1,1:])) * 0.5, 360.0 ) * 0.5 + A[:-1,:-1]
-    #     for jj, ii in singularities:
-    #         if jj<A.shape[0]-1 and ii<A.shape[1]-1:
-    #             mean_lon[jj, ii] = np.fmod( -A[jj+1, ii+1] + (A[jj, ii+1] + A[jj+1, ii]) * 0.5, 360.0 ) * 0.5 + A[jj+1, ii+1]
-    #             # mean_lon[jj, ii] = 0.5 * A[jj+1, ii+1] + 0.25 * (A[jj, ii+1] + A[jj+1, ii])
-    #         if jj>=1 and ii>=1:
-    #             mean_lon[jj-1, ii-1] = np.fmod( -A[jj-1, ii-1] + (A[jj, ii-1] + A[jj-1, ii]) * 0.5, 360.0 ) * 0.5 + A[jj-1, ii-1]
-    #             # mean_lon[jj-1, ii-1] = 0.5 * A[jj-1, ii-1] + 0.25 * (A[jj, ii-1] + A[jj-1, ii])
-    #         if jj<A.shape[0]-1 and ii>=1:
-    #             mean_lon[jj, ii-1] = np.fmod( -A[jj+1, ii-1] + (A[jj, ii-1] + A[jj+1, ii]) * 0.5, 360.0 ) * 0.5 + A[jj+1, ii-1]
-    #             # mean_lon[jj, ii-1] = 0.5 * A[jj+1, ii-1] + 0.25 * (A[jj, ii-1] + A[jj+1, ii])
-    #         if jj>=1 and ii<A.shape[1]-1:
-    #             mean_lon[jj-1, ii] = np.fmod( -A[jj-1, ii+1] + (A[jj, ii+1] + A[jj-1, ii]) * 0.5, 360.0 ) * 0.5 + A[jj-1, ii+1]
-    #             # mean_lon[jj-1, ii] = 0.5 * A[jj-1, ii+1] + 0.25 * (A[jj, ii+1] + A[jj-1, ii])
-    #     return mean_lon
 
     def interp_center_coords(self, work_in_3d=True):
         """Returns interpolated center coordinates from nodes"""
@@ -594,12 +499,12 @@ class RegularCoord:
     @property
     def size(self):
         """Return the size of the coordinate"""
-        return self.stop - self.start + self.n * int( self.start>self.stop )
+        return self.stop - self.start + self.n * int( self.periodic and self.start>=self.stop )
     @property
     def centers(self):
-        """Return center coordinates (N = size)"""
+        """Return center coordinates (length = size)"""
         if self._centers is None or self._centers.size!=self.size:
-            if self.start>self.stop:
+            if self.periodic and self.start>=self.stop:
                 self._centers = self.origin + self.delta * np.r_[np.arange(self.start+0.5, self.n),
                                                                  np.arange(self.n+0.5, self.n+self.stop)]
             else:
@@ -607,19 +512,22 @@ class RegularCoord:
         return self._centers
     @property
     def bounds(self):
-        """Return boundary coordinates (N = size+1)"""
+        """Return boundary coordinates (length = size+1)"""
         if self._bounds is None or self._bounds.size!=self.size+1:
-            if self.start>self.stop:
+            if self.periodic and self.start>=self.stop:
                 self._bounds = self.origin + self.delta * np.r_[np.arange(self.start, self.n),
-                                                                np.arange(self.n, self.n+self.stop+0.5)]
+                                                                np.arange(self.n, self.n+self.stop+1)]
             else:
-                self._bounds = self.origin + self.delta * np.arange(self.start, self.stop+0.5)
+                self._bounds = self.origin + self.delta * np.arange(self.start, self.stop+1)
         return self._bounds
     def subset( self, start=None, stop=None ):
         """Subset a RegularCoord with slice "slc" """
         Is, Ie = 0, self.n
         if start is not None: Is = start
         if stop is not None: Ie = stop
+        assert Is<Ie and (not self.periodic), "start is larger than stop in non-periodic coordinate."
+        if Is==Ie and self.periodic: # Only happens when all longitudes are included and shifting origin is likely unnecessary.
+            Is, Ie = 0, self.n
         S = RegularCoord( self.n, self.origin, self.periodic, delta=self.delta ) # This creates a copy of "self"
         S.start, S.stop = Is, Ie
         return S
