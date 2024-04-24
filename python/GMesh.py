@@ -57,7 +57,7 @@ class IntCoord(object):
         return self._centers
     @property
     def bounds(self):
-        if self._bounds is None or self._centers.size!=self.size+1:
+        if self._bounds is None or self._bounds.size!=self.size+1:
             if self.start>self.stop:
                 self._bounds = self.origin + self.delta * np.r_[np.arange(self.start-0.5, self.n),
                                                                np.arange(self.n+0.5, self.n+self.stop)]
@@ -238,14 +238,10 @@ class GMesh:
 
     def __lonmean2(lon1, lon2, period=360.0):
         """Private method. Returns 2-point mean for longitude with the consideration of periodicity. """
-        # mean_lon = 0.5 * (lon1 + lon2)
-        # half_period = 0.5 * period
         # The special scenario that lon1 and lon2 are exactly 180-degree apart is unlikely to encounter here and
         # therefore ignored. In that scenario, 2D average is more complicated and requires latitude information.
-        # return np.where( np.mod( np.abs(lon1-lon2), period ) > half_period,
-        #                 np.mod(mean_lon + half_period - lon1, period) + lon1, mean_lon )
-        # return mean_lon - np.sign(mean_lon) * (((mean_lon//half_period)%2)!=0) * half_period
-        return lon1 + 0.5 * (np.mod(lon2-lon1, period) - (np.mod(lon2-lon1, period)>0.5*period) * period)
+        distance = np.mod(lon2-lon1, period)
+        return lon1 + 0.5 * ( distance - (distance>0.5*period) * period )
 
     def __mean2j_lon(A, periodicity=True, singularities=[]):
         """Private method. Returns 2-point mean along j-direction for longitude.
@@ -436,38 +432,43 @@ class GMesh:
                                      + ( self.height[1::2,:-1:2] + self.height[:-1:2,1::2] ) )
         if timers: gtic = GMesh._toc(gtic, "Whole process")
 
-    def find_nn_uniform_source(self, lon, lat, use_center=False):
-        """Returns the i,j arrays for the indexes of the nearest neighbor point to grid (lon,lat)"""
-        sni,snj = lon.n,lat.n # Shape of source
-        # Spacing on uniform mesh
-        dellon, dellat = lon.delta, lat.delta
-        # assert self.lat.max()<=lat.origin+(lat.stop+0.5)*lat.delta, 'Mesh has latitudes above range of regular grid '+str(self.lat.max())+' '+str(lat.origin+(lat.stop+0.5)*lat.delta)
-        # assert self.lat.min()>=lat.origin+(lat.start-0.5)*lat.delta, 'Mesh has latitudes below range of regular grid '+str(self.lat.min())+' '+str(lat.origin+(lat.start-0.5)*lat.delta)
+    def find_nn_uniform_source(self, lon, lat, use_center=False, debug=False):
+        """Returns the i,j arrays for the indexes of the nearest neighbor centers at (lon,lat) to the self nodes
+        The option use_center=True is default so that lon,lat are cell-center coordinates."""
+
         if use_center:
+            # Searching for source cells that the self centers fall into
             lon_tgt, lat_tgt = self.interp_center_coords(work_in_3d=True)
         else:
+            # Searching for source cells that the self nodes fall into
             lon_tgt, lat_tgt = self.lon, self.lat
-        # Nearest integer (the upper one if equidistant)
-        nn_i = np.floor(np.mod(lon_tgt-lon.origin+0.5*dellon,360)/dellon)
-        nn_j = np.floor(0.5+(lat_tgt-lat.origin)/dellat)
-        nn_j = np.minimum(nn_j, snj-1)
+        nn_i, nn_j = lon.indices( lon_tgt ), lat.indices( lat_tgt )
+        # nn_i,nn_j = eds.indices( lon_tgt, lat_tgt )
+        if debug:
+            print('Self lon =',lon[0],'...',lon[-1])
+            print('Self lat =',lat[0],'...',lat[-1])
+            print('Target lon =',lon_tgt)
+            print('Target lat =',lat_tgt)
+            print('Source lon =',lon[nn_i])
+            print('Source lat =',lat[nn_j])
+            print('NN i =',nn_i)
+            print('NN j =',nn_j)
         assert nn_j.min()>=0, 'Negative j index calculated! j='+str(nn_j.min())
-        assert nn_j.max()<snj, 'Out of bounds j index calculated! j='+str(nn_j.max())
+        # assert nn_j.max()<eds.nj, 'Out of bounds j index calculated! j='+str(nn_j.max())
+        assert nn_j.max()<lat.size, 'Out of bounds j index calculated! j='+str(nn_j.max())
         assert nn_i.min()>=0, 'Negative i index calculated! i='+str(nn_i.min())
-        assert nn_i.max()<sni, 'Out of bounds i index calculated! i='+str(nn_i.max())
-        return nn_i.astype(int),nn_j.astype(int)
+        # assert nn_i.max()<eds.ni, 'Out of bounds i index calculated! i='+str(nn_i.max())
+        assert nn_i.max()<lon.size, 'Out of bounds i index calculated! i='+str(nn_i.max())
+        return nn_i,nn_j
 
     def source_hits(self, xs, ys, use_center=False, singularity_radius=0.25):
         """Returns an mask array of 1's if a cell with center (xs,ys) is intercepted by a node
            on the mesh, 0 if no node falls in a cell"""
         # Indexes of nearest xs,ys to each node on the mesh
         i,j = self.find_nn_uniform_source(xs,ys,use_center=use_center)
-        sni, snj = xs.size, ys.size # Shape of source
-        hits = np.zeros((snj,sni))
-        if singularity_radius>0:
-            iy = (np.ceil((90-singularity_radius-ys.origin)/ys.delta)-ys.start).astype(int)
-            hits[iy:] = 1
-        hits[j-ys.start, np.mod(i-xs.start, xs.n)] = 1
+        hits = np.zeros((xs.size, ys.size))
+        if singularity_radius>0: hits[ys.indices( 90.0 - singularity_radius ):,:] = 1
+        hits[j,i] = 1
         return hits
 
     def _toc(tic, label):
@@ -547,16 +548,22 @@ class GMesh:
 
         return GMesh_list
 
-    def project_source_data_onto_target_mesh(self,xs,ys,zs,use_center=False):
+    def project_source_data_onto_target_mesh(self, xs, ys, zs, use_center=False, timers=False):
         """Returns the array on target mesh with values equal to the nearest-neighbor source point data"""
-        # if xs.shape != ys.shape: raise Exception('xs and ys must be the same shape')
-        nns_i,nns_j = self.find_nn_uniform_source(xs,ys,use_center=use_center)
+        if timers: gtic = GMesh._toc(None, "")
         if use_center:
             self.height = np.zeros((self.nj,self.ni))
+            tx, ty = self.interp_center_coords(work_in_3d=True)
         else:
             self.height = np.zeros((self.nj+1,self.ni+1))
-        self.height[:,:] = zs[nns_j[:,:]-ys.start, np.mod(nns_i[:,:]-xs.start, xs.n)]
-        return
+            tx, ty = self.lon, self.lat
+        if timers: tic = GMesh._toc(gtic, "Allocate memory")
+        nns_i,nns_j = xs.indices( tx ), ys.indices( ty )
+        # nns_i,nns_j = eds.indices( tx, ty )
+        # nns_i,nns_j = self.find_nn_uniform_source(xs,ys,use_center=use_center)
+        self.height[:,:] = zs[nns_j[:,:], nns_i[:,:]]
+        if timers: tic = GMesh._toc(tic, "indirect indexing")
+        if timers: tic = GMesh._toc(gtic, "Whole process")
 
 class RegularCoord:
     """Container for uniformly spaced global cell center coordinate parameters
@@ -593,20 +600,20 @@ class RegularCoord:
         """Return center coordinates (N = size)"""
         if self._centers is None or self._centers.size!=self.size:
             if self.start>self.stop:
-                self._centers = self.origin + self.delta * np.r_[np.arange(self.start, self.n),
-                                                                 np.arange(self.n, self.n+self.stop)]
+                self._centers = self.origin + self.delta * np.r_[np.arange(self.start+0.5, self.n),
+                                                                 np.arange(self.n+0.5, self.n+self.stop)]
             else:
-                self._centers = self.origin + self.delta * np.arange(self.start, self.stop)
+                self._centers = self.origin + self.delta * np.arange(self.start+0.5, self.stop)
         return self._centers
     @property
     def bounds(self):
         """Return boundary coordinates (N = size+1)"""
         if self._bounds is None or self._bounds.size!=self.size+1:
             if self.start>self.stop:
-                self._bounds = self.origin + self.delta * np.r_[np.arange(self.start-0.5, self.n),
-                                                                np.arange(self.n+0.5, self.n+self.stop)]
+                self._bounds = self.origin + self.delta * np.r_[np.arange(self.start, self.n),
+                                                                np.arange(self.n, self.n+self.stop+0.5)]
             else:
-                self._bounds = self.origin + self.delta * np.arange(self.start-0.5, self.stop)
+                self._bounds = self.origin + self.delta * np.arange(self.start, self.stop+0.5)
         return self._bounds
     def subset( self, start=None, stop=None ):
         """Subset a RegularCoord with slice "slc" """
@@ -624,19 +631,16 @@ class RegularCoord:
         If RegularCoord is a subset, then "x" will be clipped to the bounds of the subset (after periodic wrapping).
         if "bound_subset" is True, then limit indices to the range of the subset
         """
+        # number of grid points from origin (global first edge)
         ind = np.floor( self.rdelta * np.array(x) - self.rem ).astype(int) - self.offset
-        # Apply global bounds
+        # Apply global bounds and reference to start
         if self.periodic:
-            ind = np.mod( ind, self.n )
+            ind = np.mod( ind - self.start, self.n )
         else:
-            ind = np.maximum( 0, np.minimum( self.n - 1, ind ) )
+            ind = np.maximum( 0, np.minimum( self.n - 1, ind ) ) - self.start
         # Now adjust for subset
         if bound_subset:
-            ind = np.maximum( self.start, np.minimum( self.stop - 1, ind ) ) - self.start
-            assert ind.min() >= 0, "out of range"
-            assert ind.max() < self.stop - self.start, "out of range"
-        else:
-            ind = ind - self.start
-            assert ind.min() >= 0, "out of range"
-            assert ind.max() < self.stop - self.start, "out of range"
+            ind = np.maximum( 0, np.minimum( self.size - 1, ind ) )
+        assert ind.min() >= 0, "out of range"
+        assert ind.max() < self.size, "out of range"
         return ind
