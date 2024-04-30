@@ -3,21 +3,41 @@
 import numpy as np
 import time
 
+def is_coord_uniform(coord, tol=1.e-5):
+    """Returns True if the coordinate "coord" is uniform along the first axis, and False otherwise
+
+    tol is the allowed fractional variation in spacing, i.e. ( variation in delta ) / delta < tol"""
+    eps = np.finfo( coord.dtype ).eps # Precision of datatype
+    # abscoord = np.abs( coord ) # Magnitude of coordinate values
+    # abscoord = np.maximum( abscoord[1:], abscoord[:-1] ) # Largest magnitude of coordinate used at centers
+    # roundoff = eps * abscoord # This is the roundoff error in calculating "coord[1:] - coord[:-1]"
+    delta = np.abs( coord[1:] - coord[:-1] ) # Spacing along first axis
+    roundoff = tol * delta[0] # Assuming delta is approximately uniform, use first value to estimate allowed variance
+    derror = np.abs( delta - delta.flatten()[0] ) # delta should be uniform so delta - delta[0] should be zero
+    return np.all( derror <= roundoff )
+
 def is_mesh_uniform(lon,lat):
     """Returns True if the input grid (lon,lat) is uniform and False otherwise"""
-    def compare(array):
-        eps = np.finfo( array.dtype ).eps # Precision of datatype
-        delta = np.abs( array[1:] - array[:-1] ) # Difference along first axis
-        error = np.abs( array )
-        error = np.maximum( error[1:], error[:-1] ) # Error in difference
-        derror = np.abs( delta - delta.flatten()[0] ) # Tolerance to which comparison can be made
-        return np.all( derror < ( error + error.flatten()[0] ) )
     assert len(lon.shape) == len(lat.shape), "Arguments lon and lat must have the same rank"
-    if len(lon.shape)==2: # 2D arralat
+    if len(lon.shape)==2: # 2D array
         assert lon.shape == lat.shape, "Arguments lon and lat must have the same shape"
-    if len(lon.shape)>2 or len(lat.shape)>2:
-        raise Exception("Arguments must be either both be 1D or both be 2D arralat")
-    return compare(lat) and compare(lon.T)
+    assert len(lon.shape)<3 and len(lat.shape)<3, "Arguments must be either both be 1D or both be 2D arralat"
+    return is_coord_uniform(lat) and is_coord_uniform(lon.T)
+
+def pfactor(n):
+    primes = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97, 0] # 0 causes error
+    for p in primes:
+        assert p > 0, "Ran out of primes - use a more robust method ..."
+        if n % p == 0:
+            if n == p:
+                return [ p ]
+            else:
+                x = pfactor( n // p )
+                x.append( p )
+                return x
+        if p * p > n:
+            return [ n ]
+    return [ n ]
 
 class GMesh:
     """Describes 2D meshes for ESMs.
@@ -380,8 +400,8 @@ class GMesh:
             else: print( '{:>10}secs : {}'.format( dt / 1000, label) )
         return time.time_ns()
 
-    def refine_loop(self, eds, max_stages=32, max_mb=2000, fixed_refine_level=-1, work_in_3d=True,
-                    use_center=True, resolution_limit=False, mask_res=[], singularity_radius=0.25, verbose=True, timers=False):
+    def refine_loop(self, eds, max_stages=32, max_mb=32000, fixed_refine_level=0, work_in_3d=True,
+                    use_center=True, resolution_limit=True, mask_res=[], singularity_radius=0.25, verbose=True, timers=False):
         """Repeatedly refines the mesh until all cells in the source grid are intercepted by mesh nodes.
            Returns a list of the refined meshes starting with parent mesh."""
         if timers: gtic = GMesh._toc(None, "")
@@ -444,7 +464,7 @@ class GMesh:
                     print('dx~1/{} dy~1/{}'.format(int(1/dellon_t), int(1/dellat_t)), end=" ")
                 print('(%.4f'%mb,'Mb)')
 
-        if not converged:
+        if not converged and fixed_refine_level<1:
             print("Warning: Maximum number of allowed refinements reached without all source cells hit.")
         if timers: tic = GMesh._toc(gtic, "Total for whole process")
 
