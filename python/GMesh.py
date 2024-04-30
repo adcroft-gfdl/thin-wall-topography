@@ -471,7 +471,7 @@ class GMesh:
         return GMesh_list
 
     def project_source_data_onto_target_mesh(self, eds, use_center=True, work_in_3d=True, timers=False):
-        """Returns the array on target mesh with values equal to the nearest-neighbor source point data"""
+        """Returns the EDS data on the target mesh (self) with values equal to the nearest-neighbor source point data"""
         if timers: gtic = GMesh._toc(None, "")
         if use_center:
             self.height = np.zeros((self.nj,self.ni))
