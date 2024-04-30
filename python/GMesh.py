@@ -369,7 +369,7 @@ class GMesh:
         # Indexes of nearest xs,ys to each node on the mesh
         i,j = self.find_nn_uniform_source(eds, use_center=use_center)
         hits = np.zeros((eds.nj, eds.ni))
-        if singularity_radius>0: hits[eds.lat_coord.indices( 90.0 - singularity_radius ):,:] = 1
+        if singularity_radius>0: hits[eds.lat_coord.indices(90.0-singularity_radius):,:] = 1
         hits[j,i] = 1
         return hits
 
@@ -393,7 +393,7 @@ class GMesh:
             converged = converged or np.all(hits) or (nhits==prev_hits)
         mb = 2*8*this.shape[0]*this.shape[1]/1024/1024
         if resolution_limit:
-            dellon_s, dellat_s = eds.spacing
+            dellon_s, dellat_s = eds.spacing()
             del_lam, del_phi = this.coarsest_resolution(mask_idx=mask_res)
             dellon_t, dellat_t = del_lam.max(), del_phi.max()
             converged = converged or ( (dellon_t<=dellon_s) and (dellat_t<=dellat_s) )
@@ -450,18 +450,18 @@ class GMesh:
 
         return GMesh_list
 
-    def project_source_data_onto_target_mesh(self, eds, use_center=False, timers=False):
+    def project_source_data_onto_target_mesh(self, eds, use_center=False, work_in_3d=True, timers=False):
         """Returns the array on target mesh with values equal to the nearest-neighbor source point data"""
         if timers: gtic = GMesh._toc(None, "")
         if use_center:
             self.height = np.zeros((self.nj,self.ni))
-            tx, ty = self.interp_center_coords(work_in_3d=True)
+            tx, ty = self.interp_center_coords(work_in_3d=work_in_3d)
         else:
             self.height = np.zeros((self.nj+1,self.ni+1))
             tx, ty = self.lon, self.lat
         if timers: tic = GMesh._toc(gtic, "Allocate memory")
         nns_i, nns_j = eds.indices( tx, ty )
-        # nns_i,nns_j = self.find_nn_uniform_source(xs,ys,use_center=use_center)
+        if timers: tic = GMesh._toc(tic, "Calculate interpolation indexes")
         self.height[:,:] = eds.data[nns_j[:,:], nns_i[:,:]]
         if timers: tic = GMesh._toc(tic, "indirect indexing")
         if timers: tic = GMesh._toc(gtic, "Whole process")
