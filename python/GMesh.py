@@ -349,12 +349,12 @@ class GMesh:
             lon_tgt, lat_tgt = self.lon, self.lat
         nn_i,nn_j = eds.indices( lon_tgt, lat_tgt )
         if debug:
-            print('Self lon =',lon[0],'...',lon[-1])
-            print('Self lat =',lat[0],'...',lat[-1])
+            print('Self lon =',eds.lonh[0],'...',eds.lonh[-1])
+            print('Self lat =',eds.lath[0],'...',eds.lath[-1])
             print('Target lon =',lon_tgt)
             print('Target lat =',lat_tgt)
-            print('Source lon =',lon[nn_i])
-            print('Source lat =',lat[nn_j])
+            print('Source lon =',eds.lonh[nn_i])
+            print('Source lat =',eds.lath[nn_j])
             print('NN i =',nn_i)
             print('NN j =',nn_j)
         assert nn_j.min()>=0, 'Negative j index calculated! j='+str(nn_j.min())
@@ -363,7 +363,7 @@ class GMesh:
         assert nn_i.max()<eds.ni, 'Out of bounds i index calculated! i='+str(nn_i.max())
         return nn_i,nn_j
 
-    def source_hits(self, eds, use_center=False, singularity_radius=0.25):
+    def source_hits(self, eds, use_center=True, singularity_radius=0.25):
         """Returns an mask array of 1's if a cell with center (xs,ys) is intercepted by a node
            on the mesh, 0 if no node falls in a cell"""
         # Indexes of nearest xs,ys to each node on the mesh
@@ -381,7 +381,7 @@ class GMesh:
         return time.time_ns()
 
     def refine_loop(self, eds, max_stages=32, max_mb=2000, fixed_refine_level=-1, work_in_3d=True,
-                    use_center=False, resolution_limit=False, mask_res=[], singularity_radius=0.25, verbose=True, timers=False):
+                    use_center=True, resolution_limit=False, mask_res=[], singularity_radius=0.25, verbose=True, timers=False):
         """Repeatedly refines the mesh until all cells in the source grid are intercepted by mesh nodes.
            Returns a list of the refined meshes starting with parent mesh."""
         if timers: gtic = GMesh._toc(None, "")
@@ -450,7 +450,7 @@ class GMesh:
 
         return GMesh_list
 
-    def project_source_data_onto_target_mesh(self, eds, use_center=False, work_in_3d=True, timers=False):
+    def project_source_data_onto_target_mesh(self, eds, use_center=True, work_in_3d=True, timers=False):
         """Returns the array on target mesh with values equal to the nearest-neighbor source point data"""
         if timers: gtic = GMesh._toc(None, "")
         if use_center:
