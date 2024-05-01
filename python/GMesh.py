@@ -305,28 +305,42 @@ class GMesh:
             lat[1::2,1::2] = GMesh.__mean4(self.lat)
         return GMesh(lon=lon, lat=lat, rfl=self.rfl+1)
 
-    def coarsest_resolution(self, mask_idx=[]):
+    def max_spacings(self, masks=[]):
         """Returns the coarsest resolution at each grid"""
         def mdist(x1, x2):
             """Returns positive distance modulo 360."""
             return np.minimum(np.mod(x1 - x2, 360.0), np.mod(x2 - x1, 360.0))
-        l, p = self.lon, self.lat
-        del_lam = np.maximum(np.maximum(np.maximum(mdist(l[:-1,:-1], l[:-1,1:]), mdist(l[1:,:-1], l[1:,1:])),
-                                        np.maximum(mdist(l[:-1,:-1], l[1:,:-1]), mdist(l[1:,1:], l[:-1,1:]))),
-                             np.maximum(mdist(l[:-1,:-1], l[1:,1:]), mdist(l[1:,:-1], l[:-1,1:])))
-        del_phi = np.maximum(np.maximum(np.maximum(np.abs(np.diff(p, axis=0))[:,1:], np.abs((np.diff(p, axis=0))[:,:-1])),
-                                        np.maximum(np.abs(np.diff(p, axis=1))[1:,:], np.abs((np.diff(p, axis=1))[:-1,:]))),
-                             np.maximum(np.abs(p[:-1,:-1]-p[1:,1:]), np.abs(p[1:,:-1]-p[:-1,1:])))
-        if len(mask_idx)>0:
-            for Js, Je, Is, Ie in mask_idx:
-                jst, jed, ist, ied = Js*(2**self.rfl), Je*(2**self.rfl), Is*(2**self.rfl), Ie*(2**self.rfl)
-                del_lam[jst:jed, ist:ied], del_phi[jst:jed, ist:ied] = 0.0, 0.0
-        return del_lam, del_phi
+        lon, lat = self.lon, self.lat # aliasing
+        # For each grid, find the largest spacing between any two of the four nodes
+        dlon = np.max( np.stack( [mdist(lon[:-1,:-1], lon[:-1,1:]), mdist(lon[1:,:-1], lon[1:,1:]),
+                                  mdist(lon[:-1,:-1], lon[1:,:-1]), mdist(lon[1:,1:], lon[:-1,1:]),
+                                  mdist(lon[:-1,:-1], lon[1:,1:]), mdist(lon[1:,:-1], lon[:-1,1:])] ), axis=0)
+        dlat = np.max( np.stack( [np.abs(lat[:-1,:-1]-lat[:-1,1:]), np.abs(lat[1:,:-1]-lat[1:,1:]),
+                                  np.abs(lat[:-1,:-1]-lat[1:,:-1]), np.abs(lat[1:,1:]-lat[:-1,1:]),
+                                  np.abs(lat[:-1,:-1]-lat[1:,1:]), np.abs(lat[1:,:-1]-lat[:-1,1:])] ), axis=0)
+        # Treat the ambiguity of the North Pole longitude
+        for jj, ii in self.np_index:
+            if jj<self.nj and ii<self.ni:
+                dlon[jj,ii] = np.max( [mdist(lon[jj+1,ii+1], lon[jj,ii+1]), mdist(lon[jj+1,ii+1], lon[jj+1,ii]),
+                                       mdist(lon[jj,ii+1], lon[jj+1,ii])] )
+            if jj>=1 and ii>=1:
+                dlon[jj-1,ii-1] = np.max( [mdist(lon[jj-1,ii-1], lon[jj,ii-1]), mdist(lon[jj-1,ii-1], lon[jj-1,ii]),
+                                           mdist(lon[jj,ii-1], lon[jj-1,ii])] )
+            if jj<self.nj and ii>=1:
+                dlon[jj,ii-1] = np.max( [mdist(lon[jj+1,ii-1], lon[jj,ii-1]), mdist(lon[jj+1,ii-1], lon[jj+1,ii]),
+                                         mdist(lon[jj,ii-1], lon[jj+1,ii])] )
+            if jj>=1 and ii<self.ni:
+                dlon[jj-1,ii] = np.max( [mdist(lon[jj-1,ii+1], lon[jj,ii+1]), mdist(lon[jj-1,ii+1], lon[jj-1,ii]),
+                                         mdist(lon[jj,ii+1], lon[jj-1,ii])] )
+        # Mask out rectangles
+        for Js, Je, Is, Ie in masks:
+            jst, jed, ist, ied = Js*(2**self.rfl), Je*(2**self.rfl), Is*(2**self.rfl), Ie*(2**self.rfl)
+            dlon[jst:jed, ist:ied], dlat[jst:jed, ist:ied] = 0.0, 0.0
+        return dlon, dlat
 
-    def max_refine_level(self, dlon_src, dlat_src):
-        dlat, dlon = self.coarsest_resolution()
-        # dlat_src, dlon_src = lon.delta, lat.delta
-
+    def max_refine_levels(self, dlon_src, dlat_src, masks=[]):
+        """Return the maximum refine levels needed for each grid box with given source data resolution"""
+        dlon, dlat = self.max_spacings(masks=masks)
         return np.maximum( np.ceil( np.log2( dlat/dlat_src ) ),
                            np.ceil( np.log2( dlon/dlon_src ) ) )
 
@@ -414,7 +428,7 @@ class GMesh:
         mb = 2*8*this.shape[0]*this.shape[1]/1024/1024
         if resolution_limit:
             dellon_s, dellat_s = eds.spacing()
-            del_lam, del_phi = this.coarsest_resolution(mask_idx=mask_res)
+            del_lam, del_phi = this.max_spacings(masks=mask_res)
             dellon_t, dellat_t = del_lam.max(), del_phi.max()
             converged = converged or ( (dellon_t<=dellon_s) and (dellat_t<=dellat_s) )
         if timers: tic = GMesh._toc(gtic, "Set up")
@@ -449,7 +463,7 @@ class GMesh:
                 converged = converged or np.all(hits) or (nhits==prev_hits)
             mb = 2*8*this.shape[0]*this.shape[1]/1024/1024
             if resolution_limit:
-                del_lam, del_phi = this.coarsest_resolution(mask_idx=mask_res)
+                del_lam, del_phi = this.max_spacings(masks=mask_res)
                 dellon_t, dellat_t = del_lam.max(), del_phi.max()
                 converged = converged or ( (dellon_t<=dellon_s) and (dellat_t<=dellat_s) )
                 if timers: stic = GMesh._toc(stic, "calculate resolution stopping criteria")
