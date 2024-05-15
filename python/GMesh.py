@@ -413,7 +413,7 @@ class GMesh:
             else: print( '{:>10}secs : {}'.format( dt / 1000, label) )
         return time.time_ns()
 
-    def refine_loop_test(self, eds, max_stages=32, max_mb=32000, fixed_refine_level=0, resolution_limit=True, mask_res=[],
+    def refine_loop(self, eds, max_stages=32, max_mb=32000, fixed_refine_level=0, resolution_limit=True, mask_res=[],
                     work_in_3d=True, use_center=True, singularity_radius=0.25, verbose=True, timers=False):
         """Repeatedly refines the mesh until all cells in the source grid are intercepted by mesh nodes.
            Returns a list of the refined meshes starting with parent mesh.
@@ -475,76 +475,6 @@ class GMesh:
             if converged: break
 
         if (not converged) and (not (resolution_limit or (fixed_refine_level>0))):
-            print("Warning: Maximum number of allowed refinements reached without all source cells hit.")
-        if timers: tic = GMesh._toc(gtic, "Total for whole process")
-
-        return GMesh_list
-
-    def refine_loop(self, eds, max_stages=32, max_mb=32000, fixed_refine_level=0, work_in_3d=True,
-                    use_center=True, resolution_limit=True, mask_res=[], singularity_radius=0.25, verbose=True, timers=False):
-        """Repeatedly refines the mesh until all cells in the source grid are intercepted by mesh nodes.
-           Returns a list of the refined meshes starting with parent mesh."""
-        if timers: gtic = GMesh._toc(None, "")
-        GMesh_list, this = [self], self
-        converged = False
-        if fixed_refine_level<1:
-            hits = this.source_hits(eds, use_center=use_center, singularity_radius=singularity_radius)
-            nhits, prev_hits = hits.sum().astype(int), 0
-            converged = converged or np.all(hits) or (nhits==prev_hits)
-        mb = 2*8*this.shape[0]*this.shape[1]/1024/1024
-        if resolution_limit:
-            dellon_s, dellat_s = eds.spacing()
-            del_lam, del_phi = this.max_spacings(masks=mask_res)
-            dellon_t, dellat_t = del_lam.max(), del_phi.max()
-            converged = converged or ( (dellon_t<=dellon_s) and (dellat_t<=dellat_s) )
-        if timers: tic = GMesh._toc(gtic, "Set up")
-        if verbose:
-            print(this)
-            print('Refine level', this.rfl, repr(this), end=" ")
-            if fixed_refine_level<1:
-                print('Hit', nhits, 'out of', hits.size, 'cells', end=" ")
-            if resolution_limit:
-                spc_lon = int(1/dellon_t) if dellon_t!=0 else float('Inf')
-                spc_lat = int(1/dellat_t) if dellat_t!=0 else float('Inf')
-                print('dx~1/{} dy~1/{}'.format(spc_lon, spc_lat), end=" ")
-            print('(%.4f'%mb,'Mb)')
-        # Conditions to refine
-        # 1) Not all cells are intercepted
-        # 2) A refinement intercepted more cells
-        # 3) [if resolution_limit] Coarsest resolution in each direction is coarser than source.
-        #    This avoids the excessive refinement which is essentially extrapolation.
-        while ( (not converged) \
-               and (len(GMesh_list)<max_stages) \
-               and (4*mb<max_mb) \
-               and (fixed_refine_level<1) \
-              ) or (this.rfl < fixed_refine_level):
-            if timers: tic = GMesh._toc(None, "")
-            this = this.refineby2(work_in_3d=work_in_3d)
-            if timers: stic = GMesh._toc(tic, "refine by 2")
-            # Find nearest neighbor indices into source
-            if fixed_refine_level<1:
-                hits = this.source_hits(eds, singularity_radius=singularity_radius)
-                if timers: stic = GMesh._toc(stic, "calculate hits on topo grid")
-                nhits, prev_hits = hits.sum().astype(int), nhits
-                converged = converged or np.all(hits) or (nhits==prev_hits)
-            mb = 2*8*this.shape[0]*this.shape[1]/1024/1024
-            if resolution_limit:
-                del_lam, del_phi = this.max_spacings(masks=mask_res)
-                dellon_t, dellat_t = del_lam.max(), del_phi.max()
-                converged = converged or ( (dellon_t<=dellon_s) and (dellat_t<=dellat_s) )
-                if timers: stic = GMesh._toc(stic, "calculate resolution stopping criteria")
-            GMesh_list.append( this )
-            if timers: stic = GMesh._toc(stic, "extending list")
-            if timers: tic = GMesh._toc(tic, "Total for loop")
-            if verbose:
-                print('Refine level', this.rfl, repr(this), end=" ")
-                if fixed_refine_level<1:
-                    print('Hit', nhits, 'out of', hits.size, 'cells', end=" ")
-                if resolution_limit:
-                    print('dx~1/{} dy~1/{}'.format(int(1/dellon_t), int(1/dellat_t)), end=" ")
-                print('(%.4f'%mb,'Mb)')
-
-        if not converged and fixed_refine_level<1:
             print("Warning: Maximum number of allowed refinements reached without all source cells hit.")
         if timers: tic = GMesh._toc(gtic, "Total for whole process")
 
