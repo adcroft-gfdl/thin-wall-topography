@@ -306,7 +306,7 @@ class GMesh:
         return GMesh(lon=lon, lat=lat, rfl=self.rfl+1)
 
     def max_spacings(self, masks=[]):
-        """Returns the coarsest resolution at each grid"""
+        """Returns the maximum spacing in lon and lat at each grid"""
         def mdist(x1, x2):
             """Returns positive distance modulo 360."""
             return np.minimum(np.mod(x1 - x2, 360.0), np.mod(x2 - x1, 360.0))
@@ -338,11 +338,10 @@ class GMesh:
             dlon[jst:jed, ist:ied], dlat[jst:jed, ist:ied] = 0.0, 0.0
         return dlon, dlat
 
-    def max_refine_levels(self, dlon_src, dlat_src, masks=[]):
-        """Return the maximum refine levels needed for each grid box with given source data resolution"""
-        dlon, dlat = self.max_spacings(masks=masks)
-        return np.maximum( np.ceil( np.log2( dlat/dlat_src ) ),
-                           np.ceil( np.log2( dlon/dlon_src ) ) )
+    def max_refine_levels(dlon_tgt, dlat_tgt, dlon_src, dlat_src):
+        """Return the maximum refine levels needed based on given target and source data resolutions"""
+        return np.maximum( np.ceil( np.log2( dlat_tgt/dlat_src ) ),
+                           np.ceil( np.log2( dlon_tgt/dlon_src ) ) )
 
     def rotate(self, y_rot=0, z_rot=0):
         """Sequentially apply a rotation about the Y-axis and then the Z-axis."""
@@ -403,7 +402,7 @@ class GMesh:
         # Indexes of nearest xs,ys to each node on the mesh
         i,j = self.find_nn_uniform_source(eds, use_center=use_center)
         hits = np.zeros((eds.nj, eds.ni))
-        if singularity_radius>0: hits[eds.lat_coord.indices(90.0-singularity_radius):,:] = 1
+        if singularity_radius>0: hits[np.abs(eds.lath)>90-singularity_radius,:] = 1 # use indices instead to avoid alloccation of lath
         hits[j,i] = 1
         return hits
 
@@ -413,6 +412,73 @@ class GMesh:
             if dt<9000: print( '{:>10}ms : {}'.format( dt, label) )
             else: print( '{:>10}secs : {}'.format( dt / 1000, label) )
         return time.time_ns()
+
+    def refine_loop_test(self, eds, max_stages=32, max_mb=32000, fixed_refine_level=0, resolution_limit=True, mask_res=[],
+                    work_in_3d=True, use_center=True, singularity_radius=0.25, verbose=True, timers=False):
+        """Repeatedly refines the mesh until all cells in the source grid are intercepted by mesh nodes.
+           Returns a list of the refined meshes starting with parent mesh.
+        Level of refinement is decided in the following order:
+        1) If fixed_refine_level is specified, the refine loop will stop after reaching the specified level
+        2) If resolution_limit is switched on, the refine loop will stop after reaching a pre-evaluated level based on target
+        grid resolution. This avoids unnessary refinement when the target grid boundaries are not a straight lon/lat lines.
+        3) Otherwise, the refine loop will stop whichever the following conditions is satisified first
+            A) All cells are intercepted or nor more cells are intercepted.
+            B) Memory (max_mb) or stage (max_stages) limit is reached.
+        """
+        if verbose: print(self)
+        if timers: gtic = GMesh._toc(None, "")
+        GMesh_list, this = [self], self
+        mb = 2*8*this.shape[0]*this.shape[1]/1024/1024
+        converged = False
+        if fixed_refine_level>0:
+            resolution_limit = False # fixed_refine_level overrides resolution_limit
+            max_rfl = fixed_refine_level
+        elif resolution_limit:
+            dellon_t, dellat_t = self.max_spacings(masks=mask_res)
+            max_rfl = np.max( GMesh.max_refine_levels(dellon_t, dellat_t, *eds.spacing()) ).astype(int)
+            if np.ma.is_masked(max_rfl): max_rfl = 0 # For dellon_t=0 and dellat_t=0 (fully masked domain)
+        else:
+            # Equivalent to prior loop-breaking conditions: len(GMesh_list)==max_stages or 4*mb>=max_mb
+            max_rfl = min( max_stages-1, np.floor(np.log2(max_mb/mb)*0.5).astype(int) )
+            hits = this.source_hits(eds, use_center=use_center, singularity_radius=singularity_radius)
+            nhits, prev_hits = hits.sum().astype(int), 0
+            converged = np.all(hits) or (nhits==prev_hits)
+        if timers: tic = GMesh._toc(gtic, "Set up")
+        if verbose:
+            print('Refine level', this.rfl, repr(this), end=" ")
+            if not (resolution_limit or (fixed_refine_level>0)):
+                print('Hit', nhits, 'out of', hits.size, 'cells', end=" ")
+            if resolution_limit:
+                dellon_tm, dellat_tm = dellon_t.max(), dellat_t.max()
+                spc_lon = int(1/dellon_tm) if dellon_tm!=0 else float('Inf')
+                spc_lat = int(1/dellat_tm) if dellat_tm!=0 else float('Inf')
+                print('dx~1/{} dy~1/{}: refine levels needs={}'.format(spc_lon, spc_lat, max_rfl), end=" ")
+            print('(%.4f'%mb,'Mb)')
+
+        for _ in range(1, max_rfl+1):
+            this = this.refineby2(work_in_3d=work_in_3d)
+            if timers: stic = GMesh._toc(tic, "refine by 2")
+            if not (resolution_limit or (fixed_refine_level>0)):
+                hits = this.source_hits(eds, singularity_radius=singularity_radius)
+                if timers: stic = GMesh._toc(stic, "calculate hits on topo grid")
+                nhits, prev_hits = hits.sum().astype(int), nhits
+                converged = converged or np.all(hits) or (nhits==prev_hits)
+            if not converged: GMesh_list.append( this )
+            if timers: stic = GMesh._toc(stic, "extending list")
+            if timers: tic = GMesh._toc(tic, "Total for loop")
+            if verbose:
+                print('Refine level', this.rfl, repr(this), end=" ")
+                if not (resolution_limit or (fixed_refine_level>0)):
+                    print('Hit', nhits, 'out of', hits.size, 'cells', end=" ")
+                mb = mb * 4
+                print('(%.4f'%mb,'Mb)')
+            if converged: break
+
+        if (not converged) and (not (resolution_limit or (fixed_refine_level>0))):
+            print("Warning: Maximum number of allowed refinements reached without all source cells hit.")
+        if timers: tic = GMesh._toc(gtic, "Total for whole process")
+
+        return GMesh_list
 
     def refine_loop(self, eds, max_stages=32, max_mb=32000, fixed_refine_level=0, work_in_3d=True,
                     use_center=True, resolution_limit=True, mask_res=[], singularity_radius=0.25, verbose=True, timers=False):
@@ -576,11 +642,13 @@ class RegularCoord:
             ind = np.mod( ind - self.start, self.n )
         else:
             ind = np.maximum( 0, np.minimum( self.n - 1, ind ) ) - self.start
+        assert ind.min() >= 0, "out of range"
+        assert ind.max() < self.n, "out of range"
         # Now adjust for subset
         if bound_subset:
             ind = np.maximum( 0, np.minimum( self.size - 1, ind ) )
-        assert ind.min() >= 0, "out of range"
-        assert ind.max() < self.size, "out of range"
+            assert ind.min() >= 0, "out of range"
+            assert ind.max() < self.size, "out of range"
         return ind
 
 class UniformEDS:
