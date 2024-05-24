@@ -259,6 +259,7 @@ class GMesh:
                     mean_lon[jj, ii] = GMesh.__lonmean2(A[jj+1, ii+1], GMesh.__lonmean2(A[jj, ii+1], A[jj+1, ii]))
                 if jj>=1 and ii>=1:
                     mean_lon[jj-1, ii-1] = GMesh.__lonmean2(A[jj-1, ii-1], GMesh.__lonmean2(A[jj, ii-1], A[jj-1, ii]))
+                if jj<A.shape[0]-1 and ii>=1:
                     mean_lon[jj, ii-1] = GMesh.__lonmean2(A[jj+1, ii-1], GMesh.__lonmean2(A[jj, ii-1], A[jj+1, ii]))
                 if jj>=1 and ii<A.shape[1]-1:
                     mean_lon[jj-1, ii] = GMesh.__lonmean2(A[jj-1, ii+1], GMesh.__lonmean2(A[jj, ii+1], A[jj-1, ii]))
