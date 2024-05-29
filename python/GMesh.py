@@ -126,6 +126,9 @@ class GMesh:
         jj, ii = np.nonzero(self.lat==90)
         self.np_index = list(zip(jj, ii))
 
+        # If any of the North Pole points is not at the boundary, there must be a jump in longitude.
+        self.has_lon_jumps = False and np.any( (jj<self.nj) & (jj>0) & (ii<self.ni) & (ii>0) )
+
         self.rfl = rfl #refining level
 
     def __copy__(self):
@@ -283,7 +286,7 @@ class GMesh:
             X,Y,Z = GMesh.__lonlat_to_XYZ(self.lon, self.lat)
             lon, lat = GMesh.__mean_from_xyz(X, Y, Z, '4')
         else:
-            lon, lat = GMesh.__mean4_lon(self.lon, singularities=self.np_index), GMesh.__mean4(self.lat)
+            lon, lat = GMesh.__mean4_lon(self.lon, periodicity=self.has_lon_jumps, singularities=self.np_index), GMesh.__mean4(self.lat)
         return lon, lat
 
     def refineby2(self, work_in_3d=True):
@@ -298,9 +301,9 @@ class GMesh:
             lon[::2,1::2], lat[::2,1::2] = GMesh.__mean_from_xyz(X, Y, Z, 'i') # Mid-point along i-direction
             lon[1::2,1::2], lat[1::2,1::2] = GMesh.__mean_from_xyz(X, Y, Z, '4') # Mid-point of cell
         else:
-            lon[1::2,::2] = GMesh.__mean2j_lon(self.lon, singularities=self.np_index)
-            lon[::2,1::2] = GMesh.__mean2i_lon(self.lon, singularities=self.np_index)
-            lon[1::2,1::2] = GMesh.__mean4_lon(self.lon, singularities=self.np_index)
+            lon[1::2,::2] = GMesh.__mean2j_lon(self.lon, periodicity=self.has_lon_jumps, singularities=self.np_index)
+            lon[::2,1::2] = GMesh.__mean2i_lon(self.lon, periodicity=self.has_lon_jumps, singularities=self.np_index)
+            lon[1::2,1::2] = GMesh.__mean4_lon(self.lon, periodicity=self.has_lon_jumps, singularities=self.np_index)
             lat[1::2,::2] = GMesh.__mean2j(self.lat)
             lat[::2,1::2] = GMesh.__mean2i(self.lat)
             lat[1::2,1::2] = GMesh.__mean4(self.lat)
