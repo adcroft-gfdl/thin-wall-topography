@@ -126,8 +126,14 @@ class GMesh:
         jj, ii = np.nonzero(self.lat==90)
         self.np_index = list(zip(jj, ii))
 
-        # If any of the North Pole points is not at the boundary, there must be a jump in longitude.
-        self.has_lon_jumps = False and np.any( (jj<self.nj) & (jj>0) & (ii<self.ni) & (ii>0) )
+        # has_lon_jumps attribute is used to decide whether to use 2D interpolation with
+        #   simple averages (fast) or shorter distance averages (slow).
+        # Longitude will have jumps if:
+        #   1. Difference in longitude value between neighboring points is larger than half the circle.
+        #   2. Any of the North Pole points is not at the boundary, there must be jumps in longitude.
+        self.has_lon_jumps = (max(np.abs(np.diff(self.lon, axis=0)).max(),
+                                  np.abs(np.diff(self.lon, axis=1)).max()) > 180.0) or \
+                             np.any( (jj<self.nj) & (jj>0) & (ii<self.ni) & (ii>0) )
 
         self.rfl = rfl #refining level
 
