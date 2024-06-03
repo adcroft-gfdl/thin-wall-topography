@@ -244,7 +244,9 @@ class GMesh:
         else:
             mean_lon = GMesh.__mean2i(A)
         for jj, ii in singularities:
-            if ii<A.shape[1]:
+            #  A: i-1,   i,   i+1
+            # mA:    i-1,   i
+            if ii<A.shape[1]-1:
                 mean_lon[jj, ii] = A[jj, ii+1]
             if ii>=1:
                 mean_lon[jj, ii-1] = A[jj, ii-1]
