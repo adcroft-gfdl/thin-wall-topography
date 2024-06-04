@@ -126,6 +126,15 @@ class GMesh:
         jj, ii = np.nonzero(self.lat==90)
         self.np_index = list(zip(jj, ii))
 
+        # has_lon_jumps attribute is used to decide whether to use 2D interpolation with
+        #   simple averages (fast) or shorter distance averages (slow).
+        # Longitude will have jumps if:
+        #   1. Difference in longitude value between neighboring points is larger than half the circle.
+        #   2. Any of the North Pole points is not at the boundary, there must be jumps in longitude.
+        self.has_lon_jumps = (max(np.abs(np.diff(self.lon, axis=0)).max(),
+                                  np.abs(np.diff(self.lon, axis=1)).max()) > 180.0) or \
+                             np.any( (jj<self.nj) & (jj>0) & (ii<self.ni) & (ii>0) )
+
         self.rfl = rfl #refining level
 
     def __copy__(self):
@@ -241,7 +250,9 @@ class GMesh:
         else:
             mean_lon = GMesh.__mean2i(A)
         for jj, ii in singularities:
-            if ii<A.shape[1]:
+            #  A: i-1,   i,   i+1
+            # mA:    i-1,   i
+            if ii<A.shape[1]-1:
                 mean_lon[jj, ii] = A[jj, ii+1]
             if ii>=1:
                 mean_lon[jj, ii-1] = A[jj, ii-1]
@@ -283,7 +294,7 @@ class GMesh:
             X,Y,Z = GMesh.__lonlat_to_XYZ(self.lon, self.lat)
             lon, lat = GMesh.__mean_from_xyz(X, Y, Z, '4')
         else:
-            lon, lat = GMesh.__mean4_lon(self.lon, singularities=self.np_index), GMesh.__mean4(self.lat)
+            lon, lat = GMesh.__mean4_lon(self.lon, periodicity=self.has_lon_jumps, singularities=self.np_index), GMesh.__mean4(self.lat)
         return lon, lat
 
     def refineby2(self, work_in_3d=True):
@@ -298,9 +309,9 @@ class GMesh:
             lon[::2,1::2], lat[::2,1::2] = GMesh.__mean_from_xyz(X, Y, Z, 'i') # Mid-point along i-direction
             lon[1::2,1::2], lat[1::2,1::2] = GMesh.__mean_from_xyz(X, Y, Z, '4') # Mid-point of cell
         else:
-            lon[1::2,::2] = GMesh.__mean2j_lon(self.lon, singularities=self.np_index)
-            lon[::2,1::2] = GMesh.__mean2i_lon(self.lon, singularities=self.np_index)
-            lon[1::2,1::2] = GMesh.__mean4_lon(self.lon, singularities=self.np_index)
+            lon[1::2,::2] = GMesh.__mean2j_lon(self.lon, periodicity=self.has_lon_jumps, singularities=self.np_index)
+            lon[::2,1::2] = GMesh.__mean2i_lon(self.lon, periodicity=self.has_lon_jumps, singularities=self.np_index)
+            lon[1::2,1::2] = GMesh.__mean4_lon(self.lon, periodicity=self.has_lon_jumps, singularities=self.np_index)
             lat[1::2,::2] = GMesh.__mean2j(self.lat)
             lat[::2,1::2] = GMesh.__mean2i(self.lat)
             lat[1::2,1::2] = GMesh.__mean4(self.lat)
