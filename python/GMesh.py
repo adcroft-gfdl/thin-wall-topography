@@ -58,7 +58,7 @@ class GMesh:
     area  - area of cells, shape (nj,ni)
     """
 
-    def __init__(self, shape=None, lon=None, lat=None, area=None, lon0=-180., from_cell_center=False, rfl=0):
+    def __init__(self, shape=None, lon=None, lat=None, area=None, lon0=-180., from_cell_center=False, is_geo_coord=True, rfl=0):
         """Constructor for Mesh:
         shape - shape of cell array, (nj,ni)
         ni    - number of cells in i-direction (last index)
@@ -67,6 +67,8 @@ class GMesh:
         lat   - latitude of mesh (cell corners) (1d or 2d)
         area  - area of cells (2d)
         lon0  - used when generating a spherical grid in absence of (lon,lat)
+        is_geo_coord - If true, lon and lat are geographic coordinates,
+                       Otherwise lon and lat are x and y from a map projection
         rfl   - refining level of this mesh
         """
         if (shape is None) and (lon is None) and (lat is None): raise Exception('Either shape must be specified or both lon and lat')
@@ -122,18 +124,20 @@ class GMesh:
         else:
             self.area = None
 
-        # Check and save North Pole point indices
-        jj, ii = np.nonzero(self.lat==90)
-        self.np_index = list(zip(jj, ii))
+        self.is_geo_coord = is_geo_coord
+        if self.is_geo_coord:
+            # Check and save North Pole point indices
+            jj, ii = np.nonzero(self.lat==90)
+            self.np_index = list(zip(jj, ii))
 
-        # has_lon_jumps attribute is used to decide whether to use 2D interpolation with
-        #   simple averages (fast) or shorter distance averages (slow).
-        # Longitude will have jumps if:
-        #   1. Difference in longitude value between neighboring points is larger than half the circle.
-        #   2. Any of the North Pole points is not at the boundary, there must be jumps in longitude.
-        self.has_lon_jumps = (max(np.abs(np.diff(self.lon, axis=0)).max(),
-                                  np.abs(np.diff(self.lon, axis=1)).max()) > 180.0) or \
-                             np.any( (jj<self.nj) & (jj>0) & (ii<self.ni) & (ii>0) )
+            # has_lon_jumps attribute is used to decide whether to use 2D interpolation with
+            #   simple averages (fast) or shorter distance averages (slow).
+            # Longitude will have jumps if:
+            #   1. Difference in longitude value between neighboring points is larger than half the circle.
+            #   2. Any of the North Pole points is not at the boundary, there must be jumps in longitude.
+            self.has_lon_jumps = (max(np.abs(np.diff(self.lon, axis=0)).max(),
+                                      np.abs(np.diff(self.lon, axis=1)).max()) > 180.0) or \
+                                  np.any( (jj<self.nj) & (jj>0) & (ii<self.ni) & (ii>0) )
 
         self.rfl = rfl #refining level
 
@@ -287,9 +291,9 @@ class GMesh:
                     mean_lon[jj-1, ii] = 0.5 * A[jj-1, ii+1] + 0.25 * (A[jj, ii+1] + A[jj-1, ii])
         return mean_lon
 
-    def interp_center_coords(self, lonlat=True, work_in_3d=True, periodicity=True):
+    def interp_center_coords(self, work_in_3d=True):
         """Returns interpolated center coordinates from nodes"""
-        if lonlat:
+        if self.is_geo_coord:
             if work_in_3d:
                 # Calculate 3d coordinates of nodes (X,Y,Z), Z points along pole, Y=0 at lon=0,180, X=0 at lon=+-90
                 X,Y,Z = GMesh.__lonlat_to_XYZ(self.lon, self.lat)
@@ -301,11 +305,11 @@ class GMesh:
             lon, lat = GMesh.__mean4(self.lon), GMesh.__mean4(self.lat)
         return lon, lat
 
-    def refineby2(self, lonlat=True, work_in_3d=True):
+    def refineby2(self, work_in_3d=True):
         """Returns new Mesh instance with twice the resolution"""
         lon, lat = np.zeros( (2*self.nj+1, 2*self.ni+1) ), np.zeros( (2*self.nj+1, 2*self.ni+1) )
         lon[::2,::2], lat[::2,::2] = self.lon, self.lat # Shared nodes
-        if lonlat:
+        if self.is_geo_coord:
             if work_in_3d:
                 # Calculate 3d coordinates of nodes (X,Y,Z), Z points along pole, Y=0 at lon=0,180, X=0 at lon=+-90
                 X,Y,Z = GMesh.__lonlat_to_XYZ(self.lon, self.lat)
@@ -327,9 +331,9 @@ class GMesh:
             lat[1::2,::2] = GMesh.__mean2j(self.lat)
             lat[::2,1::2] = GMesh.__mean2i(self.lat)
             lat[1::2,1::2] = GMesh.__mean4(self.lat)
-        return GMesh(lon=lon, lat=lat, rfl=self.rfl+1)
+        return GMesh(lon=lon, lat=lat, rfl=self.rfl+1, is_geo_coord=self.is_geo_coord)
 
-    def max_spacings(self, masks=[], islon=True):
+    def max_spacings(self, masks=[]):
         """Returns the maximum spacing in lon and lat at each grid"""
         def mdist(x1, x2):
             """Returns positive distance modulo 360."""
@@ -340,7 +344,7 @@ class GMesh:
                                   np.abs(lat[:-1,:-1]-lat[1:,:-1]), np.abs(lat[1:,1:]-lat[:-1,1:]),
                                   np.abs(lat[:-1,:-1]-lat[1:,1:]), np.abs(lat[1:,:-1]-lat[:-1,1:])] ), axis=0)
 
-        if islon:
+        if self.is_geo_coord:
             dlon = np.max( np.stack( [mdist(lon[:-1,:-1], lon[:-1,1:]), mdist(lon[1:,:-1], lon[1:,1:]),
                                       mdist(lon[:-1,:-1], lon[1:,:-1]), mdist(lon[1:,1:], lon[:-1,1:]),
                                       mdist(lon[:-1,:-1], lon[1:,1:]), mdist(lon[1:,:-1], lon[:-1,1:])] ), axis=0)
@@ -401,13 +405,13 @@ class GMesh:
                                      + ( self.height[1::2,:-1:2] + self.height[:-1:2,1::2] ) )
         if timers: gtic = GMesh._toc(gtic, "Whole process")
 
-    def find_nn_uniform_source(self, eds, use_center=True, lonlat=True, work_in_3d=True, debug=False):
+    def find_nn_uniform_source(self, eds, use_center=True, work_in_3d=True, debug=False):
         """Returns the i,j arrays for the indexes of the nearest neighbor centers at (lon,lat) to the self nodes
         The option use_center=True is default so that lon,lat are cell-center coordinates."""
 
         if use_center:
             # Searching for source cells that the self centers fall into
-            lon_tgt, lat_tgt = self.interp_center_coords(lonlat=lonlat, work_in_3d=work_in_3d)
+            lon_tgt, lat_tgt = self.interp_center_coords(work_in_3d=work_in_3d)
         else:
             # Searching for source cells that the self nodes fall into
             lon_tgt, lat_tgt = self.lon, self.lat
@@ -427,13 +431,14 @@ class GMesh:
         assert nn_i.max()<eds.ni, 'Out of bounds i index calculated! i='+str(nn_i.max())
         return nn_i,nn_j
 
-    def source_hits(self, eds, use_center=True, lonlat=True, work_in_3d=True, singularity_radius=0.25):
+    def source_hits(self, eds, use_center=True, work_in_3d=True, singularity_radius=0.25):
         """Returns an mask array of 1's if a cell with center (xs,ys) is intercepted by a node
            on the mesh, 0 if no node falls in a cell"""
         # Indexes of nearest xs,ys to each node on the mesh
-        i,j = self.find_nn_uniform_source(eds, use_center=use_center, lonlat=lonlat, work_in_3d=work_in_3d)
+        i,j = self.find_nn_uniform_source(eds, use_center=use_center, work_in_3d=work_in_3d)
         hits = np.zeros((eds.nj, eds.ni))
-        if singularity_radius>0: hits[np.abs(eds.lath)>90-singularity_radius,:] = 1 # use indices instead to avoid alloccation of lath
+        if self.is_geo_coord and singularity_radius>0:
+            hits[np.abs(eds.lath)>90-singularity_radius,:] = 1 # use indices instead to avoid alloccation of lath
         hits[j,i] = 1
         return hits
 
@@ -445,7 +450,7 @@ class GMesh:
         return time.time_ns()
 
     def refine_loop(self, eds, max_stages=32, max_mb=32000, fixed_refine_level=0, resolution_limit=True, mask_res=[],
-                    lonlat=True, work_in_3d=True, use_center=True, singularity_radius=0.25, verbose=True, timers=False):
+                    work_in_3d=True, use_center=True, singularity_radius=0.25, verbose=True, timers=False):
         """Repeatedly refines the mesh until all cells in the source grid are intercepted by mesh nodes.
            Returns a list of the refined meshes starting with parent mesh.
         Level of refinement is decided in the following order:
@@ -471,7 +476,7 @@ class GMesh:
         else:
             # Equivalent to prior loop-breaking conditions: len(GMesh_list)==max_stages or 4*mb>=max_mb
             max_rfl = min( max_stages-1, np.floor(np.log2(max_mb/mb)*0.5).astype(int) )
-            hits = this.source_hits(eds, lonlat=lonlat, use_center=use_center, singularity_radius=singularity_radius)
+            hits = this.source_hits(eds, use_center=use_center, singularity_radius=singularity_radius)
             nhits, prev_hits = hits.sum().astype(int), 0
             converged = np.all(hits) or (nhits==prev_hits)
         if timers: tic = GMesh._toc(gtic, "Set up")
@@ -487,7 +492,7 @@ class GMesh:
             print('(%.4f'%mb,'Mb)')
 
         for _ in range(1, max_rfl+1):
-            this = this.refineby2(lonlat=lonlat, work_in_3d=work_in_3d)
+            this = this.refineby2(work_in_3d=work_in_3d)
             if timers: stic = GMesh._toc(tic, "refine by 2")
             if not (resolution_limit or (fixed_refine_level>0)):
                 hits = this.source_hits(eds, singularity_radius=singularity_radius)
@@ -511,12 +516,12 @@ class GMesh:
 
         return GMesh_list
 
-    def project_source_data_onto_target_mesh(self, eds, use_center=True, lonlat=True, work_in_3d=True, periodicity=True, timers=False):
+    def project_source_data_onto_target_mesh(self, eds, use_center=True, work_in_3d=True, timers=False):
         """Returns the EDS data on the target mesh (self) with values equal to the nearest-neighbor source point data"""
         if timers: gtic = GMesh._toc(None, "")
         if use_center:
             self.height = np.zeros((self.nj,self.ni))
-            tx, ty = self.interp_center_coords(lonlat=lonlat, work_in_3d=work_in_3d, periodicity=periodicity)
+            tx, ty = self.interp_center_coords(work_in_3d=work_in_3d)
         else:
             self.height = np.zeros((self.nj+1,self.ni+1))
             tx, ty = self.lon, self.lat
