@@ -264,10 +264,15 @@ class ThinWalls(GMesh):
         self.c_effective = self.c_simple.copy()
         self.u_effective = self.u_simple.copy()
         self.v_effective = self.v_simple.copy()
-    def set_edge_to_step(self):
+    def set_edge_to_step(self, method='max'):
         """Set elevation of cell edges to step topography."""
         tmp = numpy.zeros(self.shapeu)
-        tmp[:,1:-1] = numpy.maximum( self.c_simple.ave[:,:-1], self.c_simple.ave[:,1:] )
+        if method=='max':
+            tmp[:,1:-1] = numpy.maximum( self.c_simple.ave[:,:-1], self.c_simple.ave[:,1:] )
+        elif method=='min':
+            tmp[:,1:-1] = numpy.maximum( self.c_simple.ave[:,:-1], self.c_simple.ave[:,1:] )
+        elif method=='ave':
+            tmp[:,1:-1] = 0.5 * ( self.c_simple.ave[:,:-1], self.c_simple.ave[:,1:] )
         tmp[:,0] = self.c_simple.ave[:,0]
         tmp[:,-1] = self.c_simple.ave[:,-1]
         self.u_simple.set_equal( tmp )
