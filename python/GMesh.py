@@ -58,7 +58,7 @@ class GMesh:
     area  - area of cells, shape (nj,ni)
     """
 
-    def __init__(self, shape=None, lon=None, lat=None, area=None, lon0=-180., from_cell_center=False, rfl=0):
+    def __init__(self, shape=None, lon=None, lat=None, area=None, lon0=-180., from_cell_center=False, is_geo_coord=True, rfl=0):
         """Constructor for Mesh:
         shape - shape of cell array, (nj,ni)
         ni    - number of cells in i-direction (last index)
@@ -67,6 +67,8 @@ class GMesh:
         lat   - latitude of mesh (cell corners) (1d or 2d)
         area  - area of cells (2d)
         lon0  - used when generating a spherical grid in absence of (lon,lat)
+        is_geo_coord - If true, lon and lat are geographic coordinates,
+                       Otherwise lon and lat are x and y from a map projection
         rfl   - refining level of this mesh
         """
         if (shape is None) and (lon is None) and (lat is None): raise Exception('Either shape must be specified or both lon and lat')
@@ -122,9 +124,20 @@ class GMesh:
         else:
             self.area = None
 
-        # Check and save North Pole point indices
-        jj, ii = np.nonzero(self.lat==90)
-        self.np_index = list(zip(jj, ii))
+        self.is_geo_coord = is_geo_coord
+        if self.is_geo_coord:
+            # Check and save North Pole point indices
+            jj, ii = np.nonzero(self.lat==90)
+            self.np_index = list(zip(jj, ii))
+
+            # has_lon_jumps attribute is used to decide whether to use 2D interpolation with
+            #   simple averages (fast) or shorter distance averages (slow).
+            # Longitude will have jumps if:
+            #   1. Difference in longitude value between neighboring points is larger than half the circle.
+            #   2. Any of the North Pole points is not at the boundary, there must be jumps in longitude.
+            self.has_lon_jumps = (max(np.abs(np.diff(self.lon, axis=0)).max(),
+                                      np.abs(np.diff(self.lon, axis=1)).max()) > 180.0) or \
+                                  np.any( (jj<self.nj) & (jj>0) & (ii<self.ni) & (ii>0) )
 
         self.rfl = rfl #refining level
 
@@ -241,7 +254,9 @@ class GMesh:
         else:
             mean_lon = GMesh.__mean2i(A)
         for jj, ii in singularities:
-            if ii<A.shape[1]:
+            #  A: i-1,   i,   i+1
+            # mA:    i-1,   i
+            if ii<A.shape[1]-1:
                 mean_lon[jj, ii] = A[jj, ii+1]
             if ii>=1:
                 mean_lon[jj, ii-1] = A[jj, ii-1]
@@ -278,33 +293,45 @@ class GMesh:
 
     def interp_center_coords(self, work_in_3d=True):
         """Returns interpolated center coordinates from nodes"""
-        if work_in_3d:
-            # Calculate 3d coordinates of nodes (X,Y,Z), Z points along pole, Y=0 at lon=0,180, X=0 at lon=+-90
-            X,Y,Z = GMesh.__lonlat_to_XYZ(self.lon, self.lat)
-            lon, lat = GMesh.__mean_from_xyz(X, Y, Z, '4')
+        if self.is_geo_coord:
+            if work_in_3d:
+                # Calculate 3d coordinates of nodes (X,Y,Z), Z points along pole, Y=0 at lon=0,180, X=0 at lon=+-90
+                X,Y,Z = GMesh.__lonlat_to_XYZ(self.lon, self.lat)
+                lon, lat = GMesh.__mean_from_xyz(X, Y, Z, '4')
+            else:
+                lon, lat = GMesh.__mean4_lon(self.lon, periodicity=self.has_lon_jumps, singularities=self.np_index), GMesh.__mean4(self.lat)
+
         else:
-            lon, lat = GMesh.__mean4_lon(self.lon, singularities=self.np_index), GMesh.__mean4(self.lat)
+            lon, lat = GMesh.__mean4(self.lon), GMesh.__mean4(self.lat)
         return lon, lat
 
     def refineby2(self, work_in_3d=True):
         """Returns new Mesh instance with twice the resolution"""
         lon, lat = np.zeros( (2*self.nj+1, 2*self.ni+1) ), np.zeros( (2*self.nj+1, 2*self.ni+1) )
         lon[::2,::2], lat[::2,::2] = self.lon, self.lat # Shared nodes
-        if work_in_3d:
-            # Calculate 3d coordinates of nodes (X,Y,Z), Z points along pole, Y=0 at lon=0,180, X=0 at lon=+-90
-            X,Y,Z = GMesh.__lonlat_to_XYZ(self.lon, self.lat)
-            # lon[::2,::2], lat[::2,::2] = np.mod(self.lon+180.0, 360.0)-180.0, self.lat # only if we REALLY want the coords to be self-consistent
-            lon[1::2,::2], lat[1::2,::2] = GMesh.__mean_from_xyz(X, Y, Z, 'j') # Mid-point along j-direction
-            lon[::2,1::2], lat[::2,1::2] = GMesh.__mean_from_xyz(X, Y, Z, 'i') # Mid-point along i-direction
-            lon[1::2,1::2], lat[1::2,1::2] = GMesh.__mean_from_xyz(X, Y, Z, '4') # Mid-point of cell
+        if self.is_geo_coord:
+            if work_in_3d:
+                # Calculate 3d coordinates of nodes (X,Y,Z), Z points along pole, Y=0 at lon=0,180, X=0 at lon=+-90
+                X,Y,Z = GMesh.__lonlat_to_XYZ(self.lon, self.lat)
+                # lon[::2,::2], lat[::2,::2] = np.mod(self.lon+180.0, 360.0)-180.0, self.lat # only if we REALLY want the coords to be self-consistent
+                lon[1::2,::2], lat[1::2,::2] = GMesh.__mean_from_xyz(X, Y, Z, 'j') # Mid-point along j-direction
+                lon[::2,1::2], lat[::2,1::2] = GMesh.__mean_from_xyz(X, Y, Z, 'i') # Mid-point along i-direction
+                lon[1::2,1::2], lat[1::2,1::2] = GMesh.__mean_from_xyz(X, Y, Z, '4') # Mid-point of cell
+            else:
+                lon[1::2,::2] = GMesh.__mean2j_lon(self.lon, periodicity=self.has_lon_jumps, singularities=self.np_index)
+                lon[::2,1::2] = GMesh.__mean2i_lon(self.lon, periodicity=self.has_lon_jumps, singularities=self.np_index)
+                lon[1::2,1::2] = GMesh.__mean4_lon(self.lon, periodicity=self.has_lon_jumps, singularities=self.np_index)
+                lat[1::2,::2] = GMesh.__mean2j(self.lat)
+                lat[::2,1::2] = GMesh.__mean2i(self.lat)
+                lat[1::2,1::2] = GMesh.__mean4(self.lat)
         else:
-            lon[1::2,::2] = GMesh.__mean2j_lon(self.lon, singularities=self.np_index)
-            lon[::2,1::2] = GMesh.__mean2i_lon(self.lon, singularities=self.np_index)
-            lon[1::2,1::2] = GMesh.__mean4_lon(self.lon, singularities=self.np_index)
+            lon[1::2,::2] = GMesh.__mean2j(self.lon)
+            lon[::2,1::2] = GMesh.__mean2i(self.lon)
+            lon[1::2,1::2] = GMesh.__mean4(self.lon)
             lat[1::2,::2] = GMesh.__mean2j(self.lat)
             lat[::2,1::2] = GMesh.__mean2i(self.lat)
             lat[1::2,1::2] = GMesh.__mean4(self.lat)
-        return GMesh(lon=lon, lat=lat, rfl=self.rfl+1)
+        return GMesh(lon=lon, lat=lat, rfl=self.rfl+1, is_geo_coord=self.is_geo_coord)
 
     def max_spacings(self, masks=[]):
         """Returns the maximum spacing in lon and lat at each grid"""
@@ -313,26 +340,33 @@ class GMesh:
             return np.minimum(np.mod(x1 - x2, 360.0), np.mod(x2 - x1, 360.0))
         lon, lat = self.lon, self.lat # aliasing
         # For each grid, find the largest spacing between any two of the four nodes
-        dlon = np.max( np.stack( [mdist(lon[:-1,:-1], lon[:-1,1:]), mdist(lon[1:,:-1], lon[1:,1:]),
-                                  mdist(lon[:-1,:-1], lon[1:,:-1]), mdist(lon[1:,1:], lon[:-1,1:]),
-                                  mdist(lon[:-1,:-1], lon[1:,1:]), mdist(lon[1:,:-1], lon[:-1,1:])] ), axis=0)
         dlat = np.max( np.stack( [np.abs(lat[:-1,:-1]-lat[:-1,1:]), np.abs(lat[1:,:-1]-lat[1:,1:]),
                                   np.abs(lat[:-1,:-1]-lat[1:,:-1]), np.abs(lat[1:,1:]-lat[:-1,1:]),
                                   np.abs(lat[:-1,:-1]-lat[1:,1:]), np.abs(lat[1:,:-1]-lat[:-1,1:])] ), axis=0)
-        # Treat the ambiguity of the North Pole longitude
-        for jj, ii in self.np_index:
-            if jj<self.nj and ii<self.ni:
-                dlon[jj,ii] = np.max( [mdist(lon[jj+1,ii+1], lon[jj,ii+1]), mdist(lon[jj+1,ii+1], lon[jj+1,ii]),
-                                       mdist(lon[jj,ii+1], lon[jj+1,ii])] )
-            if jj>=1 and ii>=1:
-                dlon[jj-1,ii-1] = np.max( [mdist(lon[jj-1,ii-1], lon[jj,ii-1]), mdist(lon[jj-1,ii-1], lon[jj-1,ii]),
-                                           mdist(lon[jj,ii-1], lon[jj-1,ii])] )
-            if jj<self.nj and ii>=1:
-                dlon[jj,ii-1] = np.max( [mdist(lon[jj+1,ii-1], lon[jj,ii-1]), mdist(lon[jj+1,ii-1], lon[jj+1,ii]),
-                                         mdist(lon[jj,ii-1], lon[jj+1,ii])] )
-            if jj>=1 and ii<self.ni:
-                dlon[jj-1,ii] = np.max( [mdist(lon[jj-1,ii+1], lon[jj,ii+1]), mdist(lon[jj-1,ii+1], lon[jj-1,ii]),
-                                         mdist(lon[jj,ii+1], lon[jj-1,ii])] )
+
+        if self.is_geo_coord:
+            dlon = np.max( np.stack( [mdist(lon[:-1,:-1], lon[:-1,1:]), mdist(lon[1:,:-1], lon[1:,1:]),
+                                      mdist(lon[:-1,:-1], lon[1:,:-1]), mdist(lon[1:,1:], lon[:-1,1:]),
+                                      mdist(lon[:-1,:-1], lon[1:,1:]), mdist(lon[1:,:-1], lon[:-1,1:])] ), axis=0)
+            # Treat the ambiguity of the North Pole longitude
+            for jj, ii in self.np_index:
+                if jj<self.nj and ii<self.ni:
+                    dlon[jj,ii] = np.max( [mdist(lon[jj+1,ii+1], lon[jj,ii+1]), mdist(lon[jj+1,ii+1], lon[jj+1,ii]),
+                                        mdist(lon[jj,ii+1], lon[jj+1,ii])] )
+                if jj>=1 and ii>=1:
+                    dlon[jj-1,ii-1] = np.max( [mdist(lon[jj-1,ii-1], lon[jj,ii-1]), mdist(lon[jj-1,ii-1], lon[jj-1,ii]),
+                                            mdist(lon[jj,ii-1], lon[jj-1,ii])] )
+                if jj<self.nj and ii>=1:
+                    dlon[jj,ii-1] = np.max( [mdist(lon[jj+1,ii-1], lon[jj,ii-1]), mdist(lon[jj+1,ii-1], lon[jj+1,ii]),
+                                            mdist(lon[jj,ii-1], lon[jj+1,ii])] )
+                if jj>=1 and ii<self.ni:
+                    dlon[jj-1,ii] = np.max( [mdist(lon[jj-1,ii+1], lon[jj,ii+1]), mdist(lon[jj-1,ii+1], lon[jj-1,ii]),
+                                            mdist(lon[jj,ii+1], lon[jj-1,ii])] )
+        else:
+            dlon = np.max( np.stack( [np.abs(lon[:-1,:-1]-lon[:-1,1:]), np.abs(lon[1:,:-1]-lon[1:,1:]),
+                                      np.abs(lon[:-1,:-1]-lon[1:,:-1]), np.abs(lon[1:,1:]-lon[:-1,1:]),
+                                      np.abs(lon[:-1,:-1]-lon[1:,1:]), np.abs(lon[1:,:-1]-lon[:-1,1:])] ), axis=0)
+
         # Mask out rectangles
         for Js, Je, Is, Ie in masks:
             jst, jed, ist, ied = Js*(2**self.rfl), Je*(2**self.rfl), Is*(2**self.rfl), Ie*(2**self.rfl)
@@ -371,13 +405,13 @@ class GMesh:
                                      + ( self.height[1::2,:-1:2] + self.height[:-1:2,1::2] ) )
         if timers: gtic = GMesh._toc(gtic, "Whole process")
 
-    def find_nn_uniform_source(self, eds, use_center=True, debug=False):
+    def find_nn_uniform_source(self, eds, use_center=True, work_in_3d=True, debug=False):
         """Returns the i,j arrays for the indexes of the nearest neighbor centers at (lon,lat) to the self nodes
         The option use_center=True is default so that lon,lat are cell-center coordinates."""
 
         if use_center:
             # Searching for source cells that the self centers fall into
-            lon_tgt, lat_tgt = self.interp_center_coords(work_in_3d=True)
+            lon_tgt, lat_tgt = self.interp_center_coords(work_in_3d=work_in_3d)
         else:
             # Searching for source cells that the self nodes fall into
             lon_tgt, lat_tgt = self.lon, self.lat
@@ -397,13 +431,14 @@ class GMesh:
         assert nn_i.max()<eds.ni, 'Out of bounds i index calculated! i='+str(nn_i.max())
         return nn_i,nn_j
 
-    def source_hits(self, eds, use_center=True, singularity_radius=0.25):
+    def source_hits(self, eds, use_center=True, work_in_3d=True, singularity_radius=0.25):
         """Returns an mask array of 1's if a cell with center (xs,ys) is intercepted by a node
            on the mesh, 0 if no node falls in a cell"""
         # Indexes of nearest xs,ys to each node on the mesh
-        i,j = self.find_nn_uniform_source(eds, use_center=use_center)
+        i,j = self.find_nn_uniform_source(eds, use_center=use_center, work_in_3d=work_in_3d)
         hits = np.zeros((eds.nj, eds.ni))
-        if singularity_radius>0: hits[np.abs(eds.lath)>90-singularity_radius,:] = 1 # use indices instead to avoid alloccation of lath
+        if self.is_geo_coord and singularity_radius>0:
+            hits[np.abs(eds.lath)>90-singularity_radius,:] = 1 # use indices instead to avoid alloccation of lath
         hits[j,i] = 1
         return hits
 
